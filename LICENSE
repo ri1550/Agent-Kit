@@ -18,12 +18,3 @@ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
 AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR OTHER DEALINGS IN THE SOFTWARE.
-
----
-
-Third-party Notices
-
-`agent-skills/ste-writing` comes from the ASD-STE100 skill and linter by Ege
-Çelebi (GitHub: @woosal1337). Copyright (c) 2026 Ege Çelebi, MIT licensed.
-- Source: https://github.com/woosal1337/blog/tree/main/videos/ep01-the-cure-for-ai-slop
-- License: https://github.com/woosal1337/blog/blob/main/LICENSE

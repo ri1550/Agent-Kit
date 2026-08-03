@@ -35,5 +35,5 @@ ln -s "$PWD/Agent-Kit/agent-skills/<skill>" ~/.claude/skills/<skill>
 A symlink keeps one copy of the source. You edit the file in the local repository and the change takes effect at once, and `git pull` updates every skill you linked.
 
 ## Credits
-- **ste-writing** — came from [@woosal1337](https://github.com/woosal1337)'s video, "The Cure for AI Slop is a 1986 Aircraft Manual". I kept the general idea, but rebuilt the skill around an overhauled version of the script.
+- **ste-writing** — came from [@woosal1337](https://github.com/woosal1337)'s video, "The Cure for AI Slop is a 1986 Aircraft Manual". I kept the general idea, but rebuilt the skill around an overhauled version of the script. The original skill and linter carry an MIT license, Copyright (c) 2026 Ege Çelebi. [Source](https://github.com/woosal1337/blog/tree/main/videos/ep01-the-cure-for-ai-slop).
 
