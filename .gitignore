@@ -1,5 +1,19 @@
-__pycache__/
+# Agent tooling
+.claude/settings.local.json
+
+# Python
 *.py[cod]
-*.swp
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+__pycache__/
+env/
+venv/
+
+# Editors
+*.sw[a-p]
 *~
+
+# Operating system
 .DS_Store
