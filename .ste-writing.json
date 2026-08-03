@@ -1,0 +1,32 @@
+{
+  "_comment": [
+    "This repository writes its own prose in STE. Delete this file to opt out.",
+    "The glossary holds the technical nouns this project uses, per rules 1.6",
+    "and 1.8. A word here is a noun we decided on, not a word we could not be",
+    "bothered to fix."
+  ],
+
+  "mode": "ste-general",
+
+  "glossary": [
+    "ASD", "ASD-STE100", "STE", "MCP",
+    "agent", "API", "argument", "artifact", "branch", "cache", "checker", "CLI",
+    "code", "commit", "config", "dependency", "dictionary", "directory",
+    "documentation", "extractor", "file", "flag", "glossary", "hook",
+    "identifier", "JSON", "linter", "log", "marker", "markdown", "merge",
+    "paragraph", "parser", "path", "pdftotext", "poppler", "prose", "Python",
+    "README", "repository", "request", "runbook", "schema", "script", "server",
+    "session", "skill", "syntax", "symlink", "token", "workflow"
+  ],
+
+  "_glossary_note": [
+    "'request' is here for 'pull request', which is a technical noun in this",
+    "field. The standard replaces the plain verb 'request' with TELL or WRITE."
+  ],
+
+  "exclude": [
+    "LICENSE",
+    "**/data/**",
+    "**/node_modules/**"
+  ]
+}

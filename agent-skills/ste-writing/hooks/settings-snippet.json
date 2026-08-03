@@ -1,0 +1,26 @@
+{
+  "_comment": [
+    "Install once, globally, in ~/.claude/settings.json. Merge the 'hooks' block",
+    "below into yours and correct the path to where you cloned Agent-Kit.",
+    "",
+    "The hook is inert everywhere by default. It exits immediately unless it",
+    "finds .ste-writing.json at the root of the repository it is running in, so",
+    "installing it globally does not switch it on for anything. Run the",
+    "ste-writing skill inside a repository to opt that repository in.",
+    "",
+    "To opt a repository back out, delete its .ste-writing.json.",
+    "",
+    "Stop hooks do not take matchers. They fire on every turn that ends."
+  ],
+
+  "hooks": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "python3 ~/Projects/Agent-Kit/agent-skills/ste-writing/hooks/ste-hook.py",
+        "timeout": 60,
+        "statusMessage": "Checking prose against STE..."
+      }
+    ]
+  }
+}
