@@ -131,11 +131,18 @@ findings from happening.
 |---|---|
 | `scripts/ste-lint.py` | The gate. Rule ids, `file:line:column`, exit codes |
 | `scripts/build-dictionary.py` | Turns your copy of the PDF into `data/` |
+| `scripts/ste_data.py` | The word lists that both scripts share |
 | `scripts/remind.py` | Prints the checklist above. Never blocks |
 | `hooks/ste-hook.py` | Stop hook. Inert unless the repository has a marker file |
 | `assets/rule-tiers.json` | The tier of each rule: enforced, flagged, or judgment |
 | `assets/house-style.json` | Our slop list, for the words STE never documents |
+| `data/ste-dictionary.json` | The words of the standard. The build step writes it |
 | `data/rule-index.md` | Rule id to section file. The build step writes it |
+
+Three sources, and they do not mix. `data/` holds what ASD wrote, and only the
+build step writes there. `assets/` holds what we wrote, and an edit takes effect
+on the next run with no rebuild. `.ste-writing.json` holds what the project
+decided.
 
 ASD holds the copyright to the standard. Do not paste it into a file, an issue,
 or a commit.

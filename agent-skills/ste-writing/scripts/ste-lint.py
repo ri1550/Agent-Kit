@@ -29,6 +29,9 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ste_data  # noqa: E402  (needs the path above)
+
 HERE = Path(__file__).resolve().parent
 SKILL_DIR = HERE.parent
 DATA = SKILL_DIR / "data"
@@ -339,14 +342,16 @@ class Linter:
         self.tiers = data["tiers"]
         self.config = config
 
-        self.approved_forms: set[str] = set(data["approved"]["forms"])
-        self.approved_lemmas: dict = data["approved"]["lemmas"]
+        vocabulary = data["vocabulary"]
+        self.approved_forms: set[str] = vocabulary.approved_forms
+        self.approved_lemmas: dict = vocabulary.approved_lemmas
         # Every non-approved word, used by ste-strict to suggest a replacement
         # once the allowlist has already rejected the word.
-        self.alternative_forms: dict = data["alternatives"]["forms"]
+        self.alternative_forms: dict[str, str] = vocabulary.alternative_forms
         # The subset ste-general fails on, because it does not run the allowlist.
-        self.slop_forms: dict = data["slop"]["forms"]
-        self.phrasal: list[str] = data["phrasal"]
+        self.slop_forms: dict[str, str] = vocabulary.slop_forms
+        self.phrasal: list[str] = vocabulary.phrasal
+        self.replacements = vocabulary.replacements
         self.marketing: set[str] = set(data["house"]["marketing"])
         self.hedges: list[str] = data["house"]["hedges"]
         self.spellings: dict = data["spelling"]["spellings"]
@@ -425,10 +430,8 @@ class Linter:
                 return True
         return word.rstrip("s") in self.approved_lemmas
 
-    def replacement_hint(self, alternative: dict | None) -> str:
-        if not alternative:
-            return ""
-        options = ", ".join(alternative["replacements"][:3])
+    def replacement_hint(self, lemma: str | None) -> str:
+        options = ", ".join(self.replacements(lemma)[:3]) if lemma else ""
         return f"The standard suggests {options}." if options else ""
 
     # -- words -------------------------------------------------------------
@@ -481,7 +484,7 @@ class Linter:
             if self.active("H.2") and slop:
                 findings.append(self.make(
                     "H.2", "unapproved_alternative", document, offset, word,
-                    f"“{slop['lemma']}” is not an approved word.",
+                    f"“{slop}” is not an approved word.",
                     self.replacement_hint(slop),
                 ))
                 continue
@@ -756,12 +759,14 @@ def main() -> int:
     try:
         anchor = Path(targets[0]) if targets[0] != "-" else Path.cwd()
         config = load_config(args.config, anchor)
+        house = load_json(ASSETS / "house-style.json", "The house style list")
+        dictionary = load_json(DATA / "ste-dictionary.json", "The STE dictionary")
         data = {
-            "approved": load_json(DATA / "approved.json", "The approved word list"),
-            "alternatives": load_json(DATA / "alternatives.json", "The alternatives list"),
-            "slop": load_json(DATA / "slop.json", "The slop list"),
-            "phrasal": load_json(DATA / "phrasal.json", "The phrasal verb list"),
-            "house": load_json(ASSETS / "house-style.json", "The house style list"),
+            # The slop list and the phrasal verb list are derived here rather
+            # than stored, so a change to house-style.json takes effect at once
+            # instead of waiting for a rebuild.
+            "vocabulary": ste_data.Vocabulary(dictionary, house),
+            "house": house,
             "spelling": load_json(ASSETS / "spelling-en-us.json", "The spelling list"),
             "tiers": load_json(ASSETS / "rule-tiers.json", "The rule tier table"),
         }

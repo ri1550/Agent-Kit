@@ -28,6 +28,10 @@ import tempfile
 from collections import OrderedDict
 from pathlib import Path
 
+import ste_data
+
+BUILDER_VERSION = "2"
+
 HERE = Path(__file__).resolve().parent
 SKILL_DIR = HERE.parent
 DEFAULT_OUT = SKILL_DIR / "data"
@@ -90,8 +94,6 @@ SPOT_CHECKS_ALTERNATIVES = {
     "check": "MAKE SURE",
     "utilize": "USE",
 }
-
-VOWELS = set("aeiou")
 
 
 class BuildError(Exception):
@@ -338,99 +340,6 @@ def parse_dictionary(pages: list[str]) -> tuple[dict, dict]:
     return approved, alternatives
 
 
-# --------------------------------------------------------------------------
-# Inflection
-# --------------------------------------------------------------------------
-
-def inflect(lemma: str, parts_of_speech: list[str]) -> set[str]:
-    """Generate the inflected forms of an unapproved word.
-
-    The dictionary prints inflected forms for approved words but gives
-    unapproved words in their base form only. Without this, the denylist would
-    catch "utilize" and miss "utilizing", which is most of the real text.
-
-    No lemmatizer is available (the linter is standard library only), so this
-    applies English suffix rules directly. Over-generation is handled by the
-    caller: any form that collides with an approved word is dropped.
-    """
-    if " " in lemma or "-" in lemma:
-        return {lemma}
-
-    forms = {lemma}
-    stem = lemma
-
-    def plural_s() -> str:
-        if re.search(r"(s|x|z|ch|sh)$", stem):
-            return stem + "es"
-        if re.search(r"[^aeiou]y$", stem):
-            return stem[:-1] + "ies"
-        return stem + "s"
-
-    def doubled() -> str:
-        # A short stressed syllable doubles its final consonant: "fit" -> "fitted".
-        if (
-            len(stem) >= 3
-            and stem[-1] not in VOWELS
-            and stem[-1] not in "wxy"
-            and stem[-2] in VOWELS
-            and stem[-3] not in VOWELS
-        ):
-            return stem + stem[-1]
-        return stem
-
-    if "v" in parts_of_speech:
-        forms.add(plural_s())
-        if stem.endswith("e"):
-            forms.add(stem + "d")
-            forms.add(stem[:-1] + "ing")
-        elif re.search(r"[^aeiou]y$", stem):
-            forms.add(stem[:-1] + "ied")
-            forms.add(stem + "ing")
-        else:
-            forms.add(doubled() + "ed")
-            forms.add(doubled() + "ing")
-
-    if "n" in parts_of_speech or "TN" in parts_of_speech:
-        forms.add(plural_s())
-
-    if "adj" in parts_of_speech:
-        if stem.endswith("e"):
-            forms.update({stem + "r", stem + "st"})
-        elif re.search(r"[^aeiou]y$", stem):
-            forms.update({stem[:-1] + "ier", stem[:-1] + "iest", stem[:-1] + "ily"})
-        else:
-            forms.update({doubled() + "er", doubled() + "est", stem + "ly"})
-
-    return {f for f in forms if f.isalpha() or " " in f}
-
-
-def select_slop(alternatives: dict, house: dict) -> tuple[set[str], set[str]]:
-    """Choose the words ste-general treats as slop.
-
-    See "_slop_comment" in house-style.json for why this is a subset rather than
-    the whole non-approved list. Two ways in: the curated core, and a length test
-    for a long word that the standard replaces with a shorter one.
-
-    Returns the chosen lemmas, and the core entries that the standard approves
-    after all, which the caller reports so the list does not rot.
-    """
-    minimum = house["slop_min_length"]
-    core = {word.lower() for word in house["slop_core"]}
-    chosen = {word for word in core if word in alternatives}
-    chosen |= {word.lower() for word in house["extra_unapproved"] if not word.startswith("_")}
-
-    for lemma, entry in alternatives.items():
-        if len(lemma) < minimum or " " in lemma:
-            continue
-        replacements = [
-            re.sub(r"\s*\([^)]*\)", "", r).strip() for r in entry["replacements"]
-        ]
-        shortest = min((len(r) for r in replacements if r), default=None)
-        if shortest is not None and shortest < len(lemma):
-            chosen.add(lemma)
-
-    return chosen, core - set(alternatives)
-
 
 # --------------------------------------------------------------------------
 # Part 1, the writing rules
@@ -638,53 +547,28 @@ def main() -> int:
     index = parse_subject_index(pages)
 
     tiers = json.loads((SKILL_DIR / "assets" / "rule-tiers.json").read_text())
-    house = json.loads((SKILL_DIR / "assets" / "house-style.json").read_text())
-
-    # Add the house words the standard never documents. They carry their own
-    # part of speech so that the inflection step below reaches them too.
-    for word, spec in house["extra_unapproved"].items():
-        if word.startswith("_"):
-            continue
-        entry = alternatives.setdefault(word, {"pos": [], "replacements": []})
-        entry["pos"] = sorted(set(entry["pos"]) | set(spec["pos"]))
-        for replacement in spec["replacements"]:
-            if replacement not in entry["replacements"]:
-                entry["replacements"].append(replacement)
 
     approved_forms = {form for entry in approved.values() for form in entry["forms"]}
 
     # Expand unapproved words to their inflected forms. An approved word always
     # wins, so a generated form never turns a permitted word into a violation.
-    expanded: dict[str, dict] = {}
+    # Each form maps to its lemma, and the lemma holds the replacements: storing
+    # the replacements against every form instead made the file three times
+    # larger and gave the same answer.
+    expanded: dict[str, str] = {}
     for lemma, entry in alternatives.items():
-        for form in inflect(lemma, entry["pos"]):
-            if form in approved_forms:
-                continue
-            expanded.setdefault(form, {"lemma": lemma, "replacements": entry["replacements"]})
+        for form in ste_data.inflect(lemma, entry["pos"]):
+            if form not in approved_forms:
+                expanded.setdefault(form, lemma)
 
-    phrasal = sorted(
-        {lemma for lemma in alternatives if " " in lemma and len(lemma.split()) == 2}
-        | set(house["phrasal_verbs"])
-    )
-
-    slop_lemmas, unmatched = select_slop(alternatives, house)
-    slop = {
-        form: entry
-        for form, entry in expanded.items()
-        if entry["lemma"] in slop_lemmas
-    }
-    if unmatched:
-        print(
-            f"note: {len(unmatched)} slop_core entries are not in the non-approved "
-            f"list and were ignored: {', '.join(sorted(unmatched)[:8])}"
-        )
-
+    # The house lists are not written here. They belong to us, not to ASD, and
+    # the linter merges them at load time so that editing them does not need a
+    # rebuild.
     print(
         f"approved {len(approved)} lemmas / {len(approved_forms)} forms · "
         f"unapproved {len(alternatives)} lemmas / {len(expanded)} forms · "
-        f"slop {len(slop_lemmas)} lemmas / {len(slop)} forms · "
         f"rules {sum(len(v) for v in rules.values())} · "
-        f"index {len(index)} subjects · phrasal verbs {len(phrasal)}"
+        f"index {len(index)} subjects"
     )
 
     problems = validate(approved, alternatives, rules, index)
@@ -704,38 +588,44 @@ def main() -> int:
 
     out = args.out
     out.mkdir(parents=True, exist_ok=True)
-    (out / "approved.json").write_text(
-        json.dumps({"lemmas": approved, "forms": sorted(approved_forms)}, indent=1),
-        encoding="utf-8",
-    )
-    (out / "alternatives.json").write_text(
-        json.dumps({"lemmas": alternatives, "forms": expanded}, indent=1), encoding="utf-8"
-    )
-    (out / "slop.json").write_text(
-        json.dumps({"lemmas": sorted(slop_lemmas), "forms": slop}, indent=1),
-        encoding="utf-8",
-    )
-    (out / "phrasal.json").write_text(json.dumps(phrasal, indent=1), encoding="utf-8")
-    write_rules(out, rules, tiers)
-    write_index(out, index, rules, tiers)
-    (out / "meta.json").write_text(
-        json.dumps(
-            {
-                "source": args.pdf.name,
-                "pages": len(pages),
+
+    # meta first, so `head ste-dictionary.json` tells you which PDF built this
+    # and whether it passed its checks.
+    dictionary = {
+        "meta": {
+            "built_by": f"{Path(__file__).name} {BUILDER_VERSION}",
+            "source_file": args.pdf.name,
+            "source_pages": len(pages),
+            "validated": not problems,
+            "counts": {
                 "approved_lemmas": len(approved),
                 "approved_forms": len(approved_forms),
                 "unapproved_lemmas": len(alternatives),
                 "unapproved_forms": len(expanded),
-                "rules": sum(len(v) for v in rules.values()),
-                "validated": not problems,
+                "rules": sum(len(section) for section in rules.values()),
+                "index_subjects": len(index),
             },
-            indent=1,
-        ),
-        encoding="utf-8",
+            "note": (
+                "Extracted from ASD-STE100, which ASD holds the copyright to. "
+                "Do not commit this file or share it."
+            ),
+        },
+        "approved": {"lemmas": approved, "forms": sorted(approved_forms)},
+        "alternatives": {"lemmas": alternatives, "forms": expanded},
+    }
+    (out / "ste-dictionary.json").write_text(
+        json.dumps(dictionary, indent=1), encoding="utf-8"
     )
+    write_rules(out, rules, tiers)
+    write_index(out, index, rules, tiers)
 
-    print(f"\nwrote {out}")
+    # An older build left several files here. Remove them so a stale copy cannot
+    # be read by mistake.
+    for stale in ("approved.json", "alternatives.json", "slop.json",
+                  "phrasal.json", "meta.json"):
+        (out / stale).unlink(missing_ok=True)
+
+    print(f"\nwrote {out / 'ste-dictionary.json'} and {out / 'rules'}")
     print("This directory is not committed. Rebuild it after you clone.")
     return 0
 

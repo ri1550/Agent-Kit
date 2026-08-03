@@ -62,13 +62,15 @@
     "in the standard's non-approved list, or the build step reports it and drops",
     "it. Words STE actually approves ('approximately', 'component', 'identify',",
     "'subsequent', 'sufficient') do not belong here. Words the dictionary never",
-    "mentions ('methodology', 'functionality') go in extra_unapproved instead."
+    "mentions ('methodology', 'demonstrate') go in extra_unapproved instead,",
+    "which already counts them as slop. A word in both lists is a mistake, and",
+    "the tests fail on it."
   ],
 
   "slop_core": [
     "accomplish", "acquire", "additional", "adequate", "advise", "appropriate",
     "ascertain", "assist", "attempt", "commence", "conduct", "considerable",
-    "demonstrate", "determine", "ensure", "establish", "evident", "facilitate",
+    "determine", "ensure", "establish", "evident", "facilitate",
     "fundamental", "implement", "indicate", "initiate", "modify", "obtain",
     "perform", "permit", "provide", "represent", "request", "require",
     "significant", "terminate", "utilize", "various", "verify"

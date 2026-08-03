@@ -36,10 +36,13 @@ def load(name: str, path: Path):
     return module
 
 
+sys.path.insert(0, str(SCRIPTS))
 lint = load("ste_lint", LINTER)
 build = load("ste_build", SCRIPTS / "build-dictionary.py")
+data_module = load("ste_data_module", SCRIPTS / "ste_data.py")
 
-have_data = (DATA / "approved.json").is_file()
+DICTIONARY = DATA / "ste-dictionary.json"
+have_data = DICTIONARY.is_file()
 needs_data = unittest.skipUnless(have_data, "no data/, run build-dictionary.py first")
 
 
@@ -123,15 +126,15 @@ class Masking(unittest.TestCase):
 class Inflection(unittest.TestCase):
     def test_verb_forms(self):
         self.assertEqual(
-            build.inflect("utilize", ["v"]),
+            data_module.inflect("utilize", ["v"]),
             {"utilize", "utilizes", "utilized", "utilizing"},
         )
 
     def test_consonant_doubling(self):
-        self.assertIn("fitted", build.inflect("fit", ["v"]))
+        self.assertIn("fitted", data_module.inflect("fit", ["v"]))
 
     def test_plural_of_y_noun(self):
-        self.assertIn("abnormalities", build.inflect("abnormality", ["n"]))
+        self.assertIn("abnormalities", data_module.inflect("abnormality", ["n"]))
 
 
 @needs_data
@@ -140,8 +143,34 @@ class Dictionary(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.approved = json.loads((DATA / "approved.json").read_text())
-        cls.alternatives = json.loads((DATA / "alternatives.json").read_text())
+        cls.dictionary = json.loads(DICTIONARY.read_text())
+        cls.approved = cls.dictionary["approved"]
+        cls.alternatives = cls.dictionary["alternatives"]
+        cls.house = json.loads((SKILL / "assets" / "house-style.json").read_text())
+
+    def test_meta_comes_first_for_diagnosis(self):
+        self.assertEqual(list(self.dictionary)[0], "meta")
+        for key in ("built_by", "source_file", "validated", "counts"):
+            self.assertIn(key, self.dictionary["meta"])
+
+    def test_the_recorded_counts_match_the_content(self):
+        counts = self.dictionary["meta"]["counts"]
+        self.assertEqual(counts["approved_lemmas"], len(self.approved["lemmas"]))
+        self.assertEqual(counts["unapproved_forms"], len(self.alternatives["forms"]))
+
+    def test_the_dictionary_holds_no_house_words(self):
+        # data/ is what ASD wrote. Our own additions merge at load time, so a
+        # word that only we invented must not be in the built file.
+        for word in ("methodology", "leverage", "endeavor"):
+            self.assertNotIn(word, self.alternatives["lemmas"], word)
+
+    def test_every_slop_core_word_is_in_the_standard(self):
+        # Catches the list rotting: an entry the standard does not list as
+        # non-approved does nothing at all.
+        unmatched = data_module.unmatched_slop_core(
+            self.alternatives["lemmas"], self.house
+        )
+        self.assertEqual(unmatched, set())
 
     def test_irregular_auxiliary_survives_its_three_line_entry(self):
         for word in ("be", "is", "was"):

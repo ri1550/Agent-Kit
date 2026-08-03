@@ -75,6 +75,12 @@ This needs `pdftotext`, which comes with poppler. It writes
 `agent-skills/ste-writing/data/`, which `.gitignore` covers. Rebuild it after you
 clone.
 
+That directory holds `ste-dictionary.json` and the rule files, and nothing else.
+It is the words of the standard and only that: our own word lists stay in
+`assets/`, where an edit takes effect on the next run rather than after a
+rebuild. The dictionary starts with a `meta` block that names the PDF it came
+from and the counts it extracted. Run `head` on the file to see what you have.
+
 The script checks its own work and writes nothing if the extraction falls short.
 A dictionary that is quietly half complete is worse than no dictionary, because
 strict mode would then pass text it never checked.
@@ -103,7 +109,7 @@ itself.
 | `ste-hook.py` | Stop hook. Lints the prose files that differ from `HEAD` and holds the turn open until they pass | Yes, once. It releases on the second pass so it cannot loop |
 | `build-dictionary.py` | Turns your copy of the PDF into the word lists and the rule files | Yes, if the extraction falls short |
 | `remind.py` | Prints the rules no script can check, after the lint passes | Never |
-| `tests/test_ste.py` | 51 tests over the word counting, the segmentation, both modes, every exit code, and the hook | Yes, on a failure |
+| `tests/test_ste.py` | 55 tests over the word counting, the segmentation, both modes, every exit code, and the hook | Yes, on a failure |
 
 Run the linter by hand at any time:
 ```bash
