@@ -123,6 +123,37 @@ class Masking(unittest.TestCase):
         self.assertNotIn("utilize", masked)
 
 
+class Version(unittest.TestCase):
+    """The version tells the linter whether it can read the built dictionary."""
+
+    def test_the_shipped_version_matches_the_release_pattern(self):
+        # The repository tags releases as v[0-9]*, so the field follows it.
+        self.assertRegex(data_module.DICTIONARY_VERSION, r"^v[0-9]+(\.[0-9]+)*$")
+
+    def test_versions_parse(self):
+        self.assertEqual(data_module.parse_version("v1.0.0"), (1, 0, 0))
+        self.assertEqual(data_module.parse_version("v2"), (2, 0, 0))
+        self.assertEqual(data_module.parse_version("v1.4"), (1, 4, 0))
+
+    def test_a_version_without_the_prefix_is_rejected(self):
+        for text in ("1.0.0", "stable-1", "", None, "vNext"):
+            with self.assertRaises(data_module.VersionError):
+                data_module.parse_version(text)
+
+    def test_a_matching_major_is_accepted(self):
+        major = data_module.parse_version(data_module.DICTIONARY_VERSION)[0]
+        self.assertTrue(data_module.check_version({"version": f"v{major}.99.99"}))
+
+    def test_a_different_major_is_refused(self):
+        major = data_module.parse_version(data_module.DICTIONARY_VERSION)[0]
+        with self.assertRaises(data_module.VersionError):
+            data_module.check_version({"version": f"v{major + 1}.0.0"})
+
+    def test_a_dictionary_from_before_versioning_is_refused(self):
+        with self.assertRaises(data_module.VersionError):
+            data_module.check_version({"built_by": "build-dictionary.py 2"})
+
+
 class Inflection(unittest.TestCase):
     def test_verb_forms(self):
         self.assertEqual(
@@ -150,8 +181,14 @@ class Dictionary(unittest.TestCase):
 
     def test_meta_comes_first_for_diagnosis(self):
         self.assertEqual(list(self.dictionary)[0], "meta")
-        for key in ("built_by", "source_file", "validated", "counts"):
+        for key in ("built_by", "version", "source_file", "validated", "counts"):
             self.assertIn(key, self.dictionary["meta"])
+
+    def test_built_by_and_version_are_separate_fields(self):
+        meta = self.dictionary["meta"]
+        self.assertEqual(meta["built_by"], "build-dictionary.py")
+        self.assertEqual(meta["version"], data_module.DICTIONARY_VERSION)
+        self.assertNotIn(" ", meta["version"])
 
     def test_the_recorded_counts_match_the_content(self):
         counts = self.dictionary["meta"]["counts"]
@@ -379,6 +416,21 @@ class ExitCodes(unittest.TestCase):
 
 class MissingDictionary(unittest.TestCase):
     """Exit 3 must never soften into exit 0. That is the gate looking green."""
+
+    @needs_data
+    def test_an_incompatible_dictionary_gives_exit_three(self):
+        # Not a crash halfway through a file, and never a quiet pass.
+        original = DICTIONARY.read_text()
+        stale = json.loads(original)
+        stale["meta"]["version"] = "v99.0.0"
+        DICTIONARY.write_text(json.dumps(stale))
+        try:
+            result = run_linter("-", stdin="Anything at all.\n")
+        finally:
+            DICTIONARY.write_text(original)
+        self.assertEqual(result.returncode, ERROR)
+        self.assertIn("v99.0.0", result.stderr)
+        self.assertIn("build-dictionary.py", result.stderr)
 
     @unittest.skipUnless(have_data, "needs data/ present so it can be hidden")
     def test_hidden_dictionary_gives_exit_three(self):

@@ -18,7 +18,55 @@ from __future__ import annotations
 
 import re
 
+# The release of the build format, written into data/ste-dictionary.json as
+# "version". It follows the release tag pattern this repository uses, v[0-9]*.
+#
+# Raise the major when a built dictionary stops being readable by the current
+# linter: a renamed key, a changed shape, a field that moves. The linter refuses
+# a major it does not know and asks for a rebuild, which is better than a
+# KeyError halfway through a file. Raise the minor or the patch for a change
+# that an older linter can still read.
+DICTIONARY_VERSION = "v1.0.0"
+
+VERSION_PATTERN = re.compile(r"^v(?P<major>\d+)(?:\.(?P<minor>\d+))?(?:\.(?P<patch>\d+))?$")
+
 VOWELS = set("aeiou")
+
+
+class VersionError(Exception):
+    """The dictionary on disk does not match the code that reads it."""
+
+
+def parse_version(version: str) -> tuple[int, int, int]:
+    match = VERSION_PATTERN.match(str(version or ""))
+    if not match:
+        raise VersionError(f"{version!r} is not a version of the form v1.0.0")
+    return (
+        int(match["major"]),
+        int(match["minor"] or 0),
+        int(match["patch"] or 0),
+    )
+
+
+def check_version(meta: dict) -> str:
+    """Confirm the built dictionary is one this code can read.
+
+    A dictionary from before versioning has no "version" at all, which is the
+    clearest case of all: it was built by code that wrote a different shape.
+    """
+    found = meta.get("version")
+    if found is None:
+        raise VersionError(
+            "this dictionary was built before the format was versioned"
+        )
+    major = parse_version(found)[0]
+    wanted = parse_version(DICTIONARY_VERSION)[0]
+    if major != wanted:
+        raise VersionError(
+            f"this dictionary is {found}, and this code reads "
+            f"{DICTIONARY_VERSION.split('.')[0]}.x"
+        )
+    return found
 
 
 def inflect(lemma: str, parts_of_speech: list[str]) -> set[str]:
@@ -129,10 +177,13 @@ class Vocabulary:
     """Every word list the linter needs, built once at load time."""
 
     def __init__(self, dictionary: dict, house: dict) -> None:
+        self.meta: dict = dictionary.get("meta", {})
+        # Check before touching the content. A dictionary built by different
+        # code should say so, not fail later on a missing key.
+        self.version = check_version(self.meta)
+
         approved = dictionary["approved"]
         alternatives = dictionary["alternatives"]
-
-        self.meta: dict = dictionary.get("meta", {})
         self.approved_forms: set[str] = set(approved["forms"])
         self.approved_lemmas: dict = approved["lemmas"]
 

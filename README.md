@@ -79,7 +79,13 @@ That directory holds `ste-dictionary.json` and the rule files, and nothing else.
 It is the words of the standard and only that: our own word lists stay in
 `assets/`, where an edit takes effect on the next run rather than after a
 rebuild. The dictionary starts with a `meta` block that names the PDF it came
-from and the counts it extracted. Run `head` on the file to see what you have.
+from, the counts it extracted, and the `version` of the build format. Run `head`
+on the file to see what you have.
+
+The linter reads that version before it reads a word. A dictionary built by an
+older format exits 3 and tells you to build it again. That is better than a
+crash part way through a file. Bump `DICTIONARY_VERSION` in
+`agent-skills/ste-writing/scripts/ste_data.py` when the built shape changes.
 
 The script checks its own work and writes nothing if the extraction falls short.
 A dictionary that is quietly half complete is worse than no dictionary, because
@@ -109,7 +115,7 @@ itself.
 | `ste-hook.py` | Stop hook. Lints the prose files that differ from `HEAD` and holds the turn open until they pass | Yes, once. It releases on the second pass so it cannot loop |
 | `build-dictionary.py` | Turns your copy of the PDF into the word lists and the rule files | Yes, if the extraction falls short |
 | `remind.py` | Prints the rules no script can check, after the lint passes | Never |
-| `tests/test_ste.py` | 55 tests over the word counting, the segmentation, both modes, every exit code, and the hook | Yes, on a failure |
+| `tests/test_ste.py` | 63 tests over the word counting, the segmentation, both modes, every exit code, and the hook | Yes, on a failure |
 
 Run the linter by hand at any time:
 ```bash
@@ -137,9 +143,5 @@ This is not a certified STE checker. It fixes the form of the writing. It cannot
 make a hollow paragraph true.
 
 ## Credits
-- **ste-writing** — came from [@woosal1337](https://github.com/woosal1337)'s
-  video, "The Cure for AI Slop is a 1986 Aircraft Manual". I kept the idea and
-  rebuilt the skill around an extractor, a linter with rule ids and exit codes,
-  and a hook. The first skill and linter carry an MIT license, Copyright (c)
-  2026 Ege Çelebi.
-  [Source](https://github.com/woosal1337/blog/tree/main/videos/ep01-the-cure-for-ai-slop).
+- **ste-writing** — came from [@woosal1337](https://github.com/woosal1337)'s video, "The Cure for AI Slop is a 1986 Aircraft Manual". I kept the idea and rebuilt the skill around an extractor, a linter with rule ids and exit codes, and a hook. The first skill and linter carry an MIT license, Copyright (c) 2026 Ege Çelebi. [Source](https://github.com/woosal1337/blog/tree/main/videos/ep01-the-cure-for-ai-slop).
+

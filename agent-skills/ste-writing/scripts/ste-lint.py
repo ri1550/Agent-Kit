@@ -761,11 +761,20 @@ def main() -> int:
         config = load_config(args.config, anchor)
         house = load_json(ASSETS / "house-style.json", "The house style list")
         dictionary = load_json(DATA / "ste-dictionary.json", "The STE dictionary")
-        data = {
+        try:
             # The slop list and the phrasal verb list are derived here rather
             # than stored, so a change to house-style.json takes effect at once
             # instead of waiting for a rebuild.
-            "vocabulary": ste_data.Vocabulary(dictionary, house),
+            vocabulary = ste_data.Vocabulary(dictionary, house)
+        except ste_data.VersionError as error:
+            raise LintError(
+                f"The STE dictionary cannot be read: {error}.\n"
+                "Build it again from your own copy of the standard:\n"
+                f"  python3 {HERE / 'build-dictionary.py'} "
+                "--pdf /path/to/ASD-STE100_ISSUE9.pdf"
+            ) from error
+        data = {
+            "vocabulary": vocabulary,
             "house": house,
             "spelling": load_json(ASSETS / "spelling-en-us.json", "The spelling list"),
             "tiers": load_json(ASSETS / "rule-tiers.json", "The rule tier table"),

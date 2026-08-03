@@ -30,7 +30,7 @@ from pathlib import Path
 
 import ste_data
 
-BUILDER_VERSION = "2"
+BUILDER = Path(__file__).name
 
 HERE = Path(__file__).resolve().parent
 SKILL_DIR = HERE.parent
@@ -593,7 +593,8 @@ def main() -> int:
     # and whether it passed its checks.
     dictionary = {
         "meta": {
-            "built_by": f"{Path(__file__).name} {BUILDER_VERSION}",
+            "built_by": BUILDER,
+            "version": ste_data.DICTIONARY_VERSION,
             "source_file": args.pdf.name,
             "source_pages": len(pages),
             "validated": not problems,
