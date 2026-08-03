@@ -85,6 +85,11 @@ repository as `.ste-writing.json`, then add that project's technical nouns to
 `glossary`. Commit it. The file is the opt-in switch and the project settings in
 one. Delete it to opt out.
 
+Set `mode` to the default for the repository, and list the paths that must be
+stricter in `strict_paths`. The mode belongs to the text, not to the repository.
+A runbook is still a runbook in a repository that is mostly prose, so the linter
+reads the mode for each file.
+
 **3. Install the hook, once.** Merge
 `agent-skills/ste-writing/hooks/settings-snippet.json` into
 `~/.claude/settings.json` and correct the path. The hook does nothing in a
@@ -98,7 +103,7 @@ itself.
 | `ste-hook.py` | Stop hook. Lints the prose files that differ from `HEAD` and holds the turn open until they pass | Yes, once. It releases on the second pass so it cannot loop |
 | `build-dictionary.py` | Turns your copy of the PDF into the word lists and the rule files | Yes, if the extraction falls short |
 | `remind.py` | Prints the rules no script can check, after the lint passes | Never |
-| `tests/test_ste.py` | 41 tests over the word counting, the segmentation, both modes, every exit code, and the hook | Yes, on a failure |
+| `tests/test_ste.py` | 51 tests over the word counting, the segmentation, both modes, every exit code, and the hook | Yes, on a failure |
 
 Run the linter by hand at any time:
 ```bash
@@ -116,9 +121,11 @@ Exit 3 never becomes exit 0. A linter that passes because it has no dictionary i
 worse than no linter, because the gate still looks green.
 
 ### What it does not do
-The linter covers 13 of the 53 writing rules. It flags 19 more that it can see
-but cannot judge, and it leaves 13 to a person. `assets/rule-tiers.json` says
-which is which, and `remind.py` prints the last group when the lint passes.
+ASD-STE100 has 53 writing rules. The linter enforces 14 and flags 22 more that it
+can see but cannot judge. Four more tell it how to count words, so it applies
+those to the word count and never reports them as a fault. The last 13 need a
+person, and `remind.py` prints them when the lint passes.
+`assets/rule-tiers.json` says which rule sits where.
 
 This is not a certified STE checker. It fixes the form of the writing. It cannot
 make a hollow paragraph true.

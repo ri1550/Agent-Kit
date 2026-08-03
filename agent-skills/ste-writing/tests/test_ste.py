@@ -224,6 +224,98 @@ class Modes(unittest.TestCase):
         result = run_linter("--config", config, str(target))
         self.assertIn("rule H.1", result.stdout)
 
+    def lint_text(self, text: str, **config) -> str:
+        path = self.config(**config) if config else None
+        target = self.dir / "x.md"
+        target.write_text(text)
+        args = ["--config", path] if path else []
+        return run_linter(*args, str(target)).stdout
+
+    def test_british_spelling_is_caught(self):
+        output = self.lint_text("Set the colour of the label.\n")
+        self.assertIn("rule 1.14", output)
+        self.assertIn("color", output)
+
+    def test_american_spelling_is_clean(self):
+        self.assertNotIn("rule 1.14", self.lint_text("Set the color of the label.\n"))
+
+    def test_phrasal_verb_is_caught(self):
+        self.assertIn("rule 9.3", self.lint_text("Spin up the server now.\n"))
+
+    def test_hedge_is_flagged(self):
+        self.assertIn("rule H.3", self.lint_text("It is worth noting that this works.\n"))
+
+    def test_inconsistent_term_is_flagged(self):
+        output = self.lint_text(
+            "Clone the repo now.\n",
+            mode="ste-general",
+            one_name_for_one_thing={"repository": ["repo"]},
+        )
+        self.assertIn("rule 1.11", output)
+        self.assertIn("repository", output)
+
+    def test_noun_cluster_is_flagged(self):
+        output = self.lint_text(
+            "Replace the engine oil pressure sensor cable now.\n",
+            mode="ste-general",
+            glossary=["engine", "oil", "pressure", "sensor", "cable"],
+        )
+        self.assertIn("rule 2.1", output)
+
+
+@needs_data
+class ModeResolution(unittest.TestCase):
+    """The mode belongs to the text. A runbook is strict in a general repo."""
+
+    STRICT_ONLY = "Install the widget.\n"  # "widget" is in no dictionary
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+        (self.dir / ".ste-writing.json").write_text(
+            json.dumps({"mode": "ste-general", "strict_paths": ["runbooks/**"]})
+        )
+        (self.dir / "runbooks").mkdir()
+        (self.dir / "README.md").write_text(self.STRICT_ONLY)
+        (self.dir / "runbooks" / "restart.md").write_text(self.STRICT_ONLY)
+
+    def lint(self, *names: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, str(LINTER), "--format", "json", *names],
+            cwd=self.dir, capture_output=True, text=True,
+        )
+
+    def test_default_mode_applies_outside_the_strict_paths(self):
+        report = json.loads(self.lint("README.md").stdout)
+        self.assertEqual(report["modes"]["README.md"], "ste-general")
+
+    def test_strict_paths_win_over_the_default_mode(self):
+        name = "runbooks/restart.md"
+        report = json.loads(self.lint(name).stdout)
+        self.assertEqual(report["modes"][name], "ste-strict")
+
+    def test_one_run_can_mix_both_modes(self):
+        result = self.lint("README.md", "runbooks/restart.md")
+        report = json.loads(result.stdout)
+        self.assertEqual(
+            set(report["modes"].values()), {"ste-general", "ste-strict"}
+        )
+        # The same text passes as general prose and fails as a strict procedure.
+        self.assertEqual(report["files"]["README.md"], [])
+        self.assertTrue(report["files"]["runbooks/restart.md"])
+        self.assertEqual(result.returncode, ENFORCED)
+
+    def test_explicit_mode_overrides_the_paths(self):
+        report = json.loads(
+            subprocess.run(
+                [sys.executable, str(LINTER), "--mode", "ste-general",
+                 "--format", "json", "runbooks/restart.md"],
+                cwd=self.dir, capture_output=True, text=True,
+            ).stdout
+        )
+        self.assertEqual(report["modes"]["runbooks/restart.md"], "ste-general")
+
 
 @needs_data
 class ExitCodes(unittest.TestCase):

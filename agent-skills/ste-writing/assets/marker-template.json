@@ -13,12 +13,27 @@
   "mode": "ste-general",
 
   "_mode_comment": [
-    "ste-general  READMEs, pull requests, docs, release notes. Structure rules",
-    "             and the slop list. No dictionary lockdown, so ordinary words",
-    "             are left alone.",
+    "ste-general  READMEs, pull request text, docs, release notes. Structure",
+    "             rules and the slop list. No dictionary lockdown, so ordinary",
+    "             words stay.",
     "ste-strict   Procedures, runbooks, safety text, error messages. Adds the",
     "             approved-word allowlist: every word must be in the STE",
-    "             dictionary or in the glossary below."
+    "             dictionary or in the glossary below.",
+    "",
+    "'mode' is the default for the repository. Use 'strict_paths' below for the",
+    "files that must be stricter than that default."
+  ],
+
+  "strict_paths": [],
+
+  "_strict_paths_comment": [
+    "Paths that get ste-strict whatever 'mode' says, as glob patterns. The mode",
+    "belongs to the text, not to the repository: a runbook is a runbook even in",
+    "a repository that is mostly prose. The hook reads this, so safety text is",
+    "gated at strict without a person choosing the mode each time.",
+    "",
+    "For example:",
+    "  [\"runbooks/**\", \"docs/procedures/**\", \"**/ERRORS.md\"]"
   ],
 
   "glossary": [
@@ -37,15 +52,15 @@
     "one word per line, relative to this file."
   ],
 
-  "one_name_for_one_thing": {
-    "repository": ["repo"],
-    "directory": ["folder", "dir"]
-  },
+  "one_name_for_one_thing": {},
 
   "_one_name_comment": [
-    "Rule 1.11. Each key is the name to use, and its list holds the names that",
-    "should be replaced by it. A word cannot be in both this list and the",
-    "glossary above. Replace these examples with your own pairs."
+    "Rule 1.11, one name for one thing. Each key is the name to use, and its",
+    "list holds the names it replaces. Empty by default: a pair like",
+    "  \"repository\": [\"repo\"]",
+    "warns on every 'repo' in the project, which is only useful once you have",
+    "decided that it matters. A word cannot be in both this list and the",
+    "glossary above."
   ],
 
   "exclude": [

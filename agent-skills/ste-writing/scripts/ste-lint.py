@@ -649,12 +649,17 @@ def totals(results: dict[str, list[Finding]]) -> tuple[int, int]:
     return enforced, len(every) - enforced
 
 
-def report_text(results: dict[str, list[Finding]], mode: str) -> str:
+def describe(modes: dict[str, str]) -> str:
+    used = sorted(set(modes.values()))
+    return used[0] if len(used) == 1 else ", ".join(used)
+
+
+def report_text(results: dict[str, list[Finding]], modes: dict[str, str]) -> str:
     lines: list[str] = []
     for path, findings in results.items():
         if not findings:
             continue
-        lines.append(path)
+        lines.append(f"{path}  [{modes.get(path, '')}]")
         for finding in findings:
             marker = "error" if finding.tier == "enforced" else "warn "
             lines.append(
@@ -668,18 +673,19 @@ def report_text(results: dict[str, list[Finding]], mode: str) -> str:
 
     enforced, flagged = totals(results)
     if not enforced and not flagged:
-        return f"clean ({mode})\n"
-    lines.append(f"{enforced} enforced, {flagged} flagged ({mode})")
+        return f"clean ({describe(modes)})\n"
+    lines.append(f"{enforced} enforced, {flagged} flagged ({describe(modes)})")
     if enforced:
         lines.append("Find the rule id in data/rule-index.md, then read only that rule.")
     return "\n".join(lines) + "\n"
 
 
-def report_json(results: dict[str, list[Finding]], mode: str) -> str:
+def report_json(results: dict[str, list[Finding]], modes: dict[str, str]) -> str:
     enforced, flagged = totals(results)
     return json.dumps(
         {
-            "mode": mode,
+            "mode": describe(modes),
+            "modes": modes,
             "enforced": enforced,
             "flagged": flagged,
             "files": {
@@ -699,11 +705,36 @@ def build_document(path: str, raw: str) -> Document:
     return Document(path=path, raw=raw, prose=mask(raw), line_starts=starts)
 
 
-def excluded(path: Path, config: dict) -> bool:
+def matches(path: Path, patterns: list[str]) -> bool:
+    text = path.as_posix()
     return any(
-        fnmatch.fnmatch(str(path), pattern) or fnmatch.fnmatch(path.name, pattern)
-        for pattern in config.get("exclude", [])
+        fnmatch.fnmatch(text, pattern)
+        or fnmatch.fnmatch(path.name, pattern)
+        or fnmatch.fnmatch(text, f"*/{pattern.lstrip('/')}")
+        for pattern in patterns
     )
+
+
+def excluded(path: Path, config: dict) -> bool:
+    return matches(path, config.get("exclude", []))
+
+
+def mode_for(path: Path, config: dict, override: str | None) -> str:
+    """Decide the mode for one file.
+
+    The mode belongs to the text, not to the repository. A runbook is strict
+    even when the repository around it is general, so `strict_paths` in the
+    marker file names the paths that get `ste-strict`. Without this, the hook
+    would gate every file at the repository mode, and strict would go back to
+    being advice for exactly the safety text it exists for.
+
+    An explicit --mode wins, so a person checking one file by hand still can.
+    """
+    if override:
+        return override
+    if matches(path, config.get("strict_paths", [])):
+        return "ste-strict"
+    return config.get("mode") or "ste-general"
 
 
 def main() -> int:
@@ -725,7 +756,6 @@ def main() -> int:
     try:
         anchor = Path(targets[0]) if targets[0] != "-" else Path.cwd()
         config = load_config(args.config, anchor)
-        mode = args.mode or config.get("mode") or "ste-general"
         data = {
             "approved": load_json(DATA / "approved.json", "The approved word list"),
             "alternatives": load_json(DATA / "alternatives.json", "The alternatives list"),
@@ -735,12 +765,22 @@ def main() -> int:
             "spelling": load_json(ASSETS / "spelling-en-us.json", "The spelling list"),
             "tiers": load_json(ASSETS / "rule-tiers.json", "The rule tier table"),
         }
-        linter = Linter(mode, data, config)
+        # One linter per mode, built on demand, so a run can mix a strict
+        # runbook and a general README without loading the data twice.
+        linters: dict[str, Linter] = {}
+
+        def linter_for(mode: str) -> Linter:
+            if mode not in linters:
+                linters[mode] = Linter(mode, data, config)
+            return linters[mode]
 
         results: dict[str, list[Finding]] = {}
+        modes: dict[str, str] = {}
         for name in targets:
             if name == "-":
-                results["<stdin>"] = linter.lint(
+                mode = args.mode or config.get("mode") or "ste-general"
+                modes["<stdin>"] = mode
+                results["<stdin>"] = linter_for(mode).lint(
                     build_document("<stdin>", sys.stdin.read())
                 )
                 continue
@@ -749,7 +789,9 @@ def main() -> int:
                 raise LintError(f"no such file: {name}")
             if excluded(path, config):
                 continue
-            results[name] = linter.lint(
+            mode = mode_for(path, config, args.mode)
+            modes[name] = mode
+            results[name] = linter_for(mode).lint(
                 build_document(name, path.read_text(encoding="utf-8", errors="replace"))
             )
     except (LintError, OSError, json.JSONDecodeError, KeyError) as error:
@@ -757,8 +799,8 @@ def main() -> int:
         return EXIT_ERROR
 
     print(
-        report_json(results, mode) if args.format == "json"
-        else report_text(results, mode),
+        report_json(results, modes) if args.format == "json"
+        else report_text(results, modes),
         end="",
     )
 

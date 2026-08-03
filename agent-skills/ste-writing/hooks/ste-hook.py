@@ -139,12 +139,13 @@ def main() -> int:
     if not files:
         allow()
 
-    mode = config.get("mode", "ste-general")
+    # No --mode here on purpose. The linter resolves the mode for each file from
+    # the marker, so a runbook listed in "strict_paths" is gated at ste-strict
+    # even when the repository around it is ste-general.
     try:
         result = subprocess.run(
             [
                 sys.executable, str(LINTER),
-                "--mode", mode,
                 "--format", "json",
                 "--config", str(root / MARKER),
                 *[str(path) for path in files],
@@ -195,11 +196,12 @@ def main() -> int:
         )
 
     block(
-        f"ste-writing ({mode}): {report.get('enforced', 0)} enforced violation(s) in "
-        "prose changed in this turn.\n\n"
+        f"ste-writing ({report.get('mode', 'ste-general')}): "
+        f"{report.get('enforced', 0)} enforced violation(s) in prose that differs "
+        "from HEAD.\n\n"
         f"{summarize(report)}\n\n"
         "Fix each one, then check your work:\n"
-        f"  python3 {LINTER} --mode {mode} <file>\n"
+        f"  python3 {LINTER} <file>\n"
         "For any rule id above, read only that rule in "
         "agent-skills/ste-writing/data/rule-index.md."
     )

@@ -26,11 +26,16 @@ complete.
    https://asd-ste100.org. It is free, but you must make an account. Then:
 
    ```bash
-   python3 scripts/build-dictionary.py --pdf /path/to/ASD-STE100_ISSUE9.pdf
+   python3 <skill>/scripts/build-dictionary.py --pdf /path/to/ASD-STE100_ISSUE9.pdf
    ```
 
-   This writes `data/`, which is never committed. It needs `pdftotext` from
-   poppler. Rebuild it after you clone.
+   `<skill>` is the directory that holds this file. Resolve it from the path of
+   `SKILL.md`, because the working directory is the user's project, not the
+   skill. Every other path in this file is relative to `<skill>` for the same
+   reason.
+
+   This writes `<skill>/data/`, which is never committed. It needs `pdftotext`
+   from poppler. Rebuild it after you clone.
 
 2. **Switch this repository on.** Copy `assets/marker-template.json` to the
    repository root as `.ste-writing.json`, set `mode`, and add this project's
@@ -51,6 +56,12 @@ complete.
 When the text mixes both, split it. Write the procedure in `ste-strict` and the
 prose around it in `ste-general`.
 
+You do not pass `--mode` for a file inside a marked repository. The linter reads
+`mode` and `strict_paths` from `.ste-writing.json` and decides for each file, so
+a runbook stays strict in a repository whose default is general. If a file needs
+`ste-strict` and no pattern covers it, add the pattern to `strict_paths` rather
+than checking that one file by hand.
+
 ## The loop
 
 Follow this in order. Step 4 is not optional and its result is not negotiable.
@@ -63,7 +74,7 @@ Follow this in order. Step 4 is not optional and its result is not negotiable.
 4. **Run the linter.**
 
    ```bash
-   python3 scripts/ste-lint.py --mode <mode> --format json <file>
+   python3 <skill>/scripts/ste-lint.py --format json <file>
    ```
 
    Exit codes: `0` clean · `1` the text breaks an enforced rule · `2` flagged
@@ -76,23 +87,22 @@ Follow this in order. Step 4 is not optional and its result is not negotiable.
    read the other rule files. Findings also carry the replacement the standard
    itself suggests, so use it.
 6. **Run the linter again.** Repeat until it exits 0.
-7. **Walk the checklist below**, because no script can check it.
+7. **Walk the checklist.** Run `python3 scripts/remind.py` and confirm each item
+   it prints. No script can check those rules.
 
 If a finding is wrong, say which one and why. Do not ignore it quietly, and do
 not edit the rule tiers to remove it.
 
 ## What the linter cannot check
 
-The linter enforces structure. These need you, and `scripts/remind.py` prints
-them when the lint passes:
+Of the 53 writing rules, the linter enforces 14 and flags 22 more that it can see
+but cannot judge. Four more tell it how to count words, so it applies those to
+the word count and never reports them as a fault. The last 13 need a person:
+whether a technical noun was the right choice, whether the information arrives in
+a useful order, whether a paragraph holds one topic.
 
-- **1.8** Technical nouns come from this project's glossary, not invented on the spot.
-- **1.9** Each technical noun is short and easy to understand.
-- **4.1** Every sentence says one thing, and says it plainly.
-- **6.1** Information arrives in the order the reader needs it.
-- **6.4** Each paragraph holds one topic.
-- **9.2** Every approved word keeps its approved meaning.
-- **9.4** Terminology matches the rest of the document.
+`scripts/remind.py` prints those 13, and `assets/rule-tiers.json` says which rule
+sits in which tier. The hook runs the reminder when the lint passes.
 
 This skill fixes the form of the writing. It cannot make a hollow paragraph true.
 
