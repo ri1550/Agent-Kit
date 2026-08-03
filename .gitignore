@@ -1,3 +1,6 @@
+# Scratch space
+development/
+
 # Agent tooling
 .claude/settings.local.json
 
