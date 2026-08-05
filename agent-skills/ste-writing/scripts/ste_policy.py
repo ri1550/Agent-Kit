@@ -52,7 +52,7 @@ class Rule(NamedTuple):
 
 
 # The H rules are ours, not ASD's. The standard had no reason to ban "seamless".
-HOUSE_RULES = ("H.1", "H.2", "H.3")
+HOUSE_RULES = ("H.1", "H.2", "H.3", "H.4")
 
 # A word this long, whose approved replacement is shorter, is the shape of the
 # problem: a long Latinate word standing in for a short plain one.
@@ -182,4 +182,5 @@ RULES = {
     "H.1": Rule("enforced", "marketing_word", "House rule: no marketing adjectives"),
     "H.2": Rule("enforced", "unapproved_alternative", "House rule: replace a word the dictionary does not approve"),
     "H.3": Rule("flagged", "hedge", "House rule: no hedging preamble"),
+    "H.4": Rule("enforced", "denied_word", "Project rule: a word this project does not use"),
 }

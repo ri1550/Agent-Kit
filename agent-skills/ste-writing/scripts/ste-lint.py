@@ -172,16 +172,82 @@ def find_config(start: Path) -> Path | None:
     return None
 
 
-def load_config(explicit: Path | None, target: Path) -> dict:
+# The keys this file used before the sections existed, and where they went. A
+# silently ignored glossary looks like the linter has gone mad, so say it.
+RENAMED = {
+    "glossary": "words.allow",
+    "one_name_for_one_thing": "words.prefer",
+    "glossary_file": "words.allow (inline)",
+    "mode": "removed, there is one mode",
+    "strict_paths": "removed, there is one mode",
+}
+
+
+class Config:
+    """A project's marker file, in the shape the linter wants.
+
+    The file mirrors ste-dictionary.json: `meta` first so that `head` on it says
+    what wrote it, then named sections. `settings` is how the linter runs here,
+    and `words` is the vocabulary this project decided on.
+    """
+
+    def __init__(self, raw: dict | None = None, path: Path | None = None) -> None:
+        raw = raw or {}
+        self.path = path
+        self.meta: dict = raw.get("meta", {})
+        settings: dict = raw.get("settings", {})
+        words: dict = raw.get("words", {})
+
+        self.locale: str = settings.get("locale", "")
+        self.exclude: list[str] = settings.get("exclude", [])
+
+        self.allow: set[str] = {w.lower() for w in words.get("allow", [])}
+        self.deny: dict[str, str] = {
+            w.lower(): replacement
+            for w, replacement in words.get("deny", {}).items()
+            if not w.startswith("_")
+        }
+        # Stored as name -> [variants]; the linter wants variant -> name.
+        self.prefer: dict[str, str] = {
+            variant.lower(): name
+            for name, variants in words.get("prefer", {}).items()
+            if not name.startswith("_")
+            for variant in variants
+        }
+
+    def validate(self) -> None:
+        both = sorted(self.allow & set(self.deny))
+        if both:
+            raise LintError(
+                f"{self.path}: {', '.join(both)} is in both words.allow and "
+                "words.deny. A word cannot be permitted and refused at once."
+            )
+        clash = sorted(self.allow & set(self.prefer))
+        if clash:
+            raise LintError(
+                f"{self.path}: {', '.join(clash)} is in words.allow and is also a "
+                "variant in words.prefer. Remove it from one of them."
+            )
+
+
+def load_config(explicit: Path | None, target: Path) -> Config:
     path = explicit or find_config(target)
     if path is None:
-        return {}
-    config = json.loads(path.read_text(encoding="utf-8"))
-    config["_path"] = str(path)
-    glossary_file = config.get("glossary_file")
-    if glossary_file:
-        words = (path.parent / glossary_file).read_text(encoding="utf-8").split()
-        config.setdefault("glossary", []).extend(words)
+        return Config()
+    raw = json.loads(path.read_text(encoding="utf-8"))
+
+    stale = [key for key in RENAMED if key in raw]
+    if stale:
+        moved = "\n".join(f"  {key}  ->  {RENAMED[key]}" for key in stale)
+        raise LintError(
+            f"{path} uses key names from an older layout:\n{moved}\n"
+            "Move them into the meta / settings / words sections. "
+            f"Run: {HERE / 'ste-lint.py'} --init  in an empty directory to see "
+            "the shape."
+        )
+
+    config = Config(raw, path)
+    config.validate()
     return config
 
 
@@ -349,9 +415,6 @@ class Linter:
         vocabulary = data["vocabulary"]
         self.approved_forms: set[str] = vocabulary.approved_forms
         self.approved_lemmas: dict = vocabulary.approved_lemmas
-        # Every non-approved word the standard lists, used for the replacement
-        # it suggests once a word has already been flagged.
-        self.alternative_forms: dict[str, str] = vocabulary.alternative_forms
         # The subset the linter fails on. See select_slop for why it is a subset.
         self.slop_forms: dict[str, str] = vocabulary.slop_forms
         self.phrasal: list[str] = vocabulary.phrasal
@@ -362,20 +425,20 @@ class Linter:
         self.spellings: dict[str, str] = vocabulary.spellings
         self.locale: str = vocabulary.locale
 
-        self.glossary = {word.lower() for word in config.get("glossary", [])}
-        self.synonyms = {
-            variant.lower(): canonical
-            for canonical, variants in config.get("one_name_for_one_thing", {}).items()
-            for variant in variants
-        }
+        self.allow: set[str] = config.allow
+        self.deny: dict[str, str] = config.deny
+        self.prefer: dict[str, str] = config.prefer
         self.base_verbs = {
             lemma for lemma, entry in self.approved_lemmas.items() if "v" in entry["pos"]
         }
+        # Rule 2.1 needs to know which words are nouns. The standard names 239 of
+        # them, which is too few to see a cluster in software prose, so the
+        # project's own words are the lever that makes the check work at all.
         self.nouns = {
             lemma
             for lemma, entry in self.approved_lemmas.items()
             if "n" in entry["pos"] or "TN" in entry["pos"]
-        } | self.glossary
+        } | self.allow
 
     # -- helpers -----------------------------------------------------------
 
@@ -408,37 +471,21 @@ class Linter:
             suggestion=suggestion,
         )
 
-    def in_glossary(self, lower: str) -> bool:
-        """True when the project declared this word, in any regular form.
+    def declared(self, lower: str, vocabulary: set[str] | dict) -> str:
+        """The declared word this one is a form of, or "".
 
-        The glossary holds base forms, so the plural and the possessive of a
-        declared noun count as declared too.
+        The sections hold base forms, so the plural and the possessive of a
+        declared word count as declared too. Nothing else is stemmed: a project
+        list is short enough to write out when a form is irregular.
         """
-        if lower in self.glossary:
-            return True
+        if lower in vocabulary:
+            return lower
         for suffix in ("s", "es", "'s", "’s"):
-            if lower.endswith(suffix) and lower[: -len(suffix)] in self.glossary:
-                return True
-        return lower.endswith("ies") and lower[:-3] + "y" in self.glossary
-
-    def known_word(self, word: str) -> bool:
-        lower = word.lower()
-        if lower in self.approved_forms or self.in_glossary(lower):
-            return True
-        # A hyphenated compound is approved when both halves are.
-        if "-" in lower:
-            parts = [part for part in lower.split("-") if part]
-            return bool(parts) and all(
-                part in self.approved_forms or self.in_glossary(part) for part in parts
-            )
-        return False
-
-    def known_lemma(self, word: str) -> bool:
-        """True when an approved word exists that this looks like a form of."""
-        for cut in (1, 2, 3):
-            if len(word) > cut + 2 and word[:-cut] in self.approved_lemmas:
-                return True
-        return word.rstrip("s") in self.approved_lemmas
+            if lower.endswith(suffix) and lower[: -len(suffix)] in vocabulary:
+                return lower[: -len(suffix)]
+        if lower.endswith("ies") and lower[:-3] + "y" in vocabulary:
+            return lower[:-3] + "y"
+        return ""
 
     def replacement_hint(self, lemma: str | None) -> str:
         options = ", ".join(self.replacements(lemma)[:3]) if lemma else ""
@@ -457,6 +504,18 @@ class Linter:
             if word.isupper() and len(word) > 1:
                 continue
 
+            # words.deny comes first, before anything can permit the word. A
+            # project is allowed to refuse a word the standard approves, and
+            # that decision has to beat every other check to mean anything.
+            if self.active("H.4") and (denied := self.declared(lower, self.deny)):
+                findings.append(self.make(
+                    "H.4", "denied_word", document, offset, word,
+                    f"“{denied}” is a word this project does not use.",
+                    f"Write “{self.deny[denied]}”." if self.deny[denied]
+                    else "Remove it, or write the plain word you mean.",
+                ))
+                continue
+
             if self.active("1.14") and lower in self.spellings:
                 findings.append(self.make(
                     "1.14", "locale_spelling", document, offset, word,
@@ -473,18 +532,18 @@ class Linter:
                 ))
                 continue
 
-            if self.active("1.11") and lower in self.synonyms:
+            if self.active("1.11") and (variant := self.declared(lower, self.prefer)):
                 findings.append(self.make(
                     "1.11", "inconsistent_term", document, offset, word,
                     "Two names for one thing.",
-                    f"Write “{self.synonyms[lower]}”.",
+                    f"Write “{self.prefer[variant]}”.",
                 ))
                 continue
 
-            # A word in the project glossary is one this project decided on,
-            # per rules 1.6 and 1.8. That answers the question the slop check
-            # is about to ask, so there is nothing left to say about it.
-            if self.in_glossary(lower):
+            # A word in words.allow is one this project decided on, per rules
+            # 1.6 and 1.8. That answers the question the slop check is about to
+            # ask, so there is nothing left to say about it.
+            if self.declared(lower, self.allow):
                 continue
 
             if self.active("H.2") and (slop := self.slop_forms.get(lower)):
@@ -666,6 +725,41 @@ def report_text(results: dict[str, list[Finding]]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def report_triage(results: dict[str, list[Finding]]) -> str:
+    """Group the word findings by word, so each is decided once, not per use.
+
+    This is the list a stored "flagged" section would hold, computed instead of
+    saved. Nothing to keep in sync, and it cannot claim a word is a problem
+    after the prose that used it is gone.
+    """
+    WORD_RULES = {"H.1", "H.2", "H.4", "1.11", "1.14"}
+    seen: dict[str, list[tuple[str, Finding]]] = {}
+    for path, findings in results.items():
+        for finding in findings:
+            if finding.rule in WORD_RULES:
+                seen.setdefault(finding.text.lower(), []).append((path, finding))
+
+    if not seen:
+        return "No words to decide.\n"
+
+    lines = [f"{len(seen)} word(s) to decide.", ""]
+    for word in sorted(seen, key=lambda w: (-len(seen[w]), w)):
+        group = seen[word]
+        path, first = group[0]
+        lines.append(f"  {word:<20} {len(group):>3}x  rule {first.rule}  {first.message}")
+        if first.suggestion:
+            lines.append(f"  {'':<20}      {first.suggestion}")
+        lines.append(f"  {'':<20}      first at {path}:{first.line}:{first.column}")
+    lines += [
+        "",
+        "Decide each one:",
+        "  ste-lint.py --add-word <word>          this project uses it",
+        "  ste-lint.py --deny <word> <instead>    this project refuses it",
+        "  ste-lint.py --prefer <name> <word>     it is another name for <name>",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def report_json(results: dict[str, list[Finding]]) -> str:
     enforced, flagged = totals(results)
     return json.dumps(
@@ -742,57 +836,74 @@ def matches(path: Path, patterns: list[str]) -> bool:
     )
 
 
-def excluded(path: Path, config: dict) -> bool:
-    return matches(path, config.get("exclude", []))
+def excluded(path: Path, config: "Config") -> bool:
+    return matches(path, config.exclude)
 
 
-MARKER_TEMPLATE = """{
-  "_comment": [
-    "This file switches ste-writing on for this repository, and holds the words",
-    "this project uses that the STE dictionary does not.",
-    "",
-    "Commit it. The glossary is a project asset, and a teammate who clones the",
-    "repository should get the opt-in and the words together. Delete the file to",
-    "opt out. Nothing else has to change.",
-    "",
-    "Written by: ste-lint.py --init"
-  ],
+MARKER_VERSION = "v1.0.0"
 
-  "glossary": [],
-
-  "_glossary_comment": [
-    "The words this project uses that STE does not approve, per rules 1.6 and",
-    "1.8. A word here is one you decided on, not one you could not be bothered",
-    "to fix. Add to it with: ste-lint.py --add-word <word> ...",
-    "",
-    "For a long list, use \\"glossary_file\\" instead and point it at a text file",
-    "of one word per line, relative to this file."
-  ],
-
-  "one_name_for_one_thing": {},
-
-  "_one_name_comment": [
-    "Rule 1.11, one name for one thing. Each key is the name to use, and its",
-    "list holds the names it replaces, for example:",
-    "  \\"repository\\": [\\"repo\\"]",
-    "Empty by default, because that pair warns on every \\"repo\\" you have ever",
-    "written and is only useful once you have decided that it matters."
-  ],
-
-  "locale": "",
-
-  "_locale_comment": [
-    "Leave empty for no spelling check. Set it to a locale you have generated,",
-    "for example \\"en-GB\\", and the linter reads data/locale-en-GB.json.",
-    "Generate one with: localize.py --en-GB"
-  ],
-
-  "exclude": [
-    "LICENSE",
-    "**/node_modules/**"
-  ]
+# Mirrors data/ste-dictionary.json: meta first, so that `head` on the file says
+# what wrote it, then named sections.
+MARKER_TEMPLATE = {
+    "meta": {
+        "written_by": "ste-lint.py --init",
+        "version": MARKER_VERSION,
+        "note": [
+            "This file switches ste-writing on for this repository, and holds",
+            "the vocabulary this project decided on. Commit it: a teammate who",
+            "clones should get the opt-in and the words together. Delete it to",
+            "opt out, and nothing else has to change.",
+        ],
+    },
+    "settings": {
+        "locale": "",
+        "exclude": ["LICENSE", "**/node_modules/**"],
+        "_note": [
+            "locale   empty means no spelling check. Set it to one you have",
+            "         generated, for example \"en-GB\", and the linter reads",
+            "         data/locale-en-GB.json. Make one with: localize.py --en-GB",
+            "exclude  paths the linter skips, as glob patterns.",
+        ],
+    },
+    "words": {
+        "allow": [],
+        "deny": {},
+        "prefer": {},
+        "_note": [
+            "Three decisions, and the linter reads them in this order.",
+            "",
+            "deny     words this project refuses, as word -> replacement. Give",
+            "         an empty replacement to say only 'do not use this'. Read",
+            "         first, so a project can refuse a word STE approves.",
+            "           \"deny\": { \"utilise\": \"use\", \"synergy\": \"\" }",
+            "         Add with: ste-lint.py --deny <word> [replacement]",
+            "",
+            "allow    words this project uses that the STE dictionary does not,",
+            "         per rules 1.6 and 1.8. Silences a finding, and teaches",
+            "         rule 2.1 that the word is a noun. A word here is one you",
+            "         decided on, not one you could not be bothered to fix.",
+            "         Add with: ste-lint.py --add-word <word> ...",
+            "",
+            "prefer   rule 1.11, one name for one thing, as name -> [variants].",
+            "           \"prefer\": { \"repository\": [\"repo\"] }",
+            "         Add with: ste-lint.py --prefer <name> <variant> ...",
+            "",
+            "Base forms only. The plural and the possessive are matched for you.",
+            "To see what this project trips on: ste-lint.py --triage <paths>",
+        ],
+    },
 }
-"""
+
+
+def read_marker(target: Path) -> dict | None:
+    if not target.is_file():
+        print(f"ste-lint: no {target}. Run --init first.", file=sys.stderr)
+        return None
+    return json.loads(target.read_text(encoding="utf-8"))
+
+
+def save_marker(target: Path, config: dict) -> None:
+    target.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
 
 
 def write_marker(target: Path) -> int:
@@ -800,24 +911,52 @@ def write_marker(target: Path) -> int:
     if target.exists():
         print(f"ste-lint: {target} already exists, leaving it alone", file=sys.stderr)
         return EXIT_ERROR
-    target.write_text(MARKER_TEMPLATE, encoding="utf-8")
+    save_marker(target, MARKER_TEMPLATE)
     print(f"wrote {target}")
     print("ste-writing is now on for this repository. Commit the file.")
     return EXIT_CLEAN
 
 
-def add_words(target: Path, words: list[str]) -> int:
-    """Append to the project glossary, keeping the file readable."""
-    if not target.is_file():
-        print(f"ste-lint: no {target}. Run --init first.", file=sys.stderr)
+def edit_words(target: Path, section: str, change) -> int:
+    """Apply a change to one section of words, keeping the file readable."""
+    config = read_marker(target)
+    if config is None:
         return EXIT_ERROR
-    config = json.loads(target.read_text(encoding="utf-8"))
-    glossary = config.get("glossary", [])
-    added = [w for w in words if w.lower() not in {g.lower() for g in glossary}]
-    config["glossary"] = sorted(glossary + added, key=str.lower)
-    target.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-    print(f"added {len(added)} word(s) to {target}: {', '.join(added) or 'none'}")
+    words = config.setdefault("words", {})
+    message = change(words)
+    save_marker(target, config)
+    print(f"{target}: {message}")
     return EXIT_CLEAN
+
+
+def add_allowed(target: Path, new: list[str]) -> int:
+    def change(words: dict) -> str:
+        allow = words.get("allow", [])
+        known = {w.lower() for w in allow}
+        added = [w for w in new if w.lower() not in known]
+        words["allow"] = sorted(allow + added, key=str.lower)
+        return f"allow += {', '.join(added) or 'nothing new'}"
+    return edit_words(target, "allow", change)
+
+
+def add_denied(target: Path, word: str, replacement: str) -> int:
+    def change(words: dict) -> str:
+        deny = words.setdefault("deny", {})
+        deny[word.lower()] = replacement
+        words["deny"] = dict(sorted(deny.items()))
+        return f"deny += {word}" + (f" -> {replacement}" if replacement else "")
+    return edit_words(target, "deny", change)
+
+
+def add_preferred(target: Path, name: str, variants: list[str]) -> int:
+    def change(words: dict) -> str:
+        prefer = words.setdefault("prefer", {})
+        existing = prefer.get(name, [])
+        merged = sorted({*existing, *(v.lower() for v in variants)})
+        prefer[name] = merged
+        words["prefer"] = dict(sorted(prefer.items()))
+        return f"prefer += {name} over {', '.join(merged)}"
+    return edit_words(target, "prefer", change)
 
 
 def main() -> int:
@@ -831,7 +970,19 @@ def main() -> int:
         "--init", action="store_true", help=f"write {MARKER} here and switch this repo on"
     )
     parser.add_argument(
-        "--add-word", nargs="+", metavar="WORD", help="add words to the project glossary"
+        "--add-word", nargs="+", metavar="WORD", help="add words to words.allow"
+    )
+    parser.add_argument(
+        "--deny", nargs="+", metavar=("WORD", "REPLACEMENT"),
+        help="refuse a word in this project: --deny utilise use",
+    )
+    parser.add_argument(
+        "--prefer", nargs="+", metavar=("NAME", "VARIANT"),
+        help="one name for one thing: --prefer repository repo",
+    )
+    parser.add_argument(
+        "--triage", action="store_true",
+        help="group the findings by word, so each can be allowed or denied once",
     )
     parser.add_argument("--rule", metavar="ID", help="print one rule, for example 3.6")
     parser.add_argument(
@@ -841,11 +992,19 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    marker = args.config or find_config(Path.cwd()) or (Path.cwd() / MARKER)
     if args.init:
         return write_marker(Path.cwd() / MARKER)
     if args.add_word:
-        return add_words(args.config or (find_config(Path.cwd()) or Path.cwd() / MARKER),
-                         args.add_word)
+        return add_allowed(marker, args.add_word)
+    if args.deny:
+        word, *rest = args.deny
+        return add_denied(marker, word, " ".join(rest))
+    if args.prefer:
+        if len(args.prefer) < 2:
+            parser.error("--prefer needs the name and at least one variant")
+        name, *variants = args.prefer
+        return add_preferred(marker, name, variants)
 
     targets = args.files or ["-"]
 
@@ -854,10 +1013,10 @@ def main() -> int:
         config = load_config(args.config, anchor)
         dictionary = load_json(DATA / "ste-dictionary.json", "The STE dictionary")
         locale = None
-        if config.get("locale"):
+        if config.locale:
             locale = load_json(
-                DATA / f"locale-{config['locale']}.json",
-                f"The {config['locale']} locale",
+                DATA / f"locale-{config.locale}.json",
+                f"The {config.locale} locale",
             )
         try:
             # The slop list and the phrasal verb list are derived here rather
@@ -895,6 +1054,10 @@ def main() -> int:
     except (LintError, OSError, json.JSONDecodeError, KeyError) as error:
         print(f"ste-lint: {error}", file=sys.stderr)
         return EXIT_ERROR
+
+    if args.triage:
+        print(report_triage(results), end="")
+        return EXIT_CLEAN
 
     print(
         report_json(results) if args.format == "json" else report_text(results),

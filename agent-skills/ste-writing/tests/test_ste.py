@@ -274,7 +274,7 @@ class Locale(unittest.TestCase):
             "spellings": {"color": "colour", "center": "centre"},
         }))
         config = self.dir / ".ste-writing.json"
-        config.write_text(json.dumps({"locale": "xx-YY"}))
+        config.write_text(json.dumps({"settings": {"locale": "xx-YY"}}))
         page = self.dir / "x.md"
         page.write_text("The color of the center.\n")
         try:
@@ -303,8 +303,11 @@ class Marker(unittest.TestCase):
         written = self.dir / ".ste-writing.json"
         self.assertTrue(written.is_file())
         config = json.loads(written.read_text())
-        self.assertEqual(config["glossary"], [])
-        self.assertEqual(config["locale"], "")
+        self.assertEqual(list(config), ["meta", "settings", "words"])
+        self.assertEqual(config["words"]["allow"], [])
+        self.assertEqual(config["words"]["deny"], {})
+        self.assertEqual(config["words"]["prefer"], {})
+        self.assertEqual(config["settings"]["locale"], "")
 
     def test_init_refuses_to_overwrite(self):
         (self.dir / ".ste-writing.json").write_text("{}")
@@ -314,18 +317,60 @@ class Marker(unittest.TestCase):
         )
         self.assertEqual(result.returncode, ERROR)
 
+    def marker(self, **words) -> Path:
+        path = self.dir / ".ste-writing.json"
+        path.write_text(json.dumps({"words": words}))
+        return path
+
+    def run(self, marker: Path, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, str(LINTER), "--config", str(marker), *args],
+            capture_output=True, text=True,
+        )
+
     def test_add_word_appends_without_duplicating(self):
+        marker = self.marker(allow=["webhook"])
+        for _ in range(2):
+            self.run(marker, "--add-word", "endpoint", "webhook")
+        self.assertEqual(
+            json.loads(marker.read_text())["words"]["allow"], ["endpoint", "webhook"]
+        )
+
+    def test_deny_records_a_replacement_or_none(self):
+        marker = self.marker()
+        self.run(marker, "--deny", "utilise", "use")
+        self.run(marker, "--deny", "synergy")
+        self.assertEqual(
+            json.loads(marker.read_text())["words"]["deny"],
+            {"synergy": "", "utilise": "use"},
+        )
+
+    def test_prefer_merges_variants(self):
+        marker = self.marker()
+        self.run(marker, "--prefer", "repository", "repo")
+        self.run(marker, "--prefer", "repository", "repos")
+        self.assertEqual(
+            json.loads(marker.read_text())["words"]["prefer"],
+            {"repository": ["repo", "repos"]},
+        )
+
+    def test_old_key_names_are_refused_not_ignored(self):
+        # A silently ignored glossary looks like the linter has gone mad.
         marker = self.dir / ".ste-writing.json"
         marker.write_text(json.dumps({"glossary": ["webhook"]}))
-        for _ in range(2):
-            subprocess.run(
-                [sys.executable, str(LINTER), "--config", str(marker),
-                 "--add-word", "endpoint", "webhook"],
-                capture_output=True, text=True,
-            )
-        self.assertEqual(
-            json.loads(marker.read_text())["glossary"], ["endpoint", "webhook"]
-        )
+        page = self.dir / "x.md"
+        page.write_text("A webhook.\n")
+        result = self.run(marker, str(page))
+        self.assertEqual(result.returncode, ERROR)
+        self.assertIn("words.allow", result.stderr)
+
+    def test_a_word_cannot_be_allowed_and_denied(self):
+        marker = self.marker(allow=["utilise"], deny={"utilise": "use"})
+        page = self.dir / "x.md"
+        page.write_text("We utilise it.\n")
+        result = self.run(marker, str(page))
+        self.assertEqual(result.returncode, ERROR)
+        self.assertIn("both", result.stderr)
 
 
 @needs_data
@@ -438,9 +483,10 @@ class Detection(unittest.TestCase):
         self.dir = Path(self.tmp.name)
         self.addCleanup(self.tmp.cleanup)
 
-    def config(self, **values) -> str:
+    def config(self, **words) -> str:
+        """A marker in the sectioned shape, with only the words section set."""
         path = self.dir / ".ste-writing.json"
-        path.write_text(json.dumps(values))
+        path.write_text(json.dumps({"words": words}))
         return str(path)
 
     def test_slop_fails_the_run(self):
@@ -458,7 +504,7 @@ class Detection(unittest.TestCase):
             self.assertNotIn(f"“{word}”", result.stdout, word)
 
     def test_glossary_does_not_silence_the_marketing_check(self):
-        config = self.config(glossary=["robust"])
+        config = self.config(allow=["robust"])
         target = self.dir / "x.md"
         target.write_text("The parser is robust.\n")
         result = run_linter("--config", config, str(target))
@@ -486,15 +532,31 @@ class Detection(unittest.TestCase):
     def test_inconsistent_term_is_flagged(self):
         output = self.lint_text(
             "Clone the repo now.\n",
-            one_name_for_one_thing={"repository": ["repo"]},
+            prefer={"repository": ["repo"]},
         )
         self.assertIn("rule 1.11", output)
         self.assertIn("repository", output)
 
+    def test_deny_beats_the_dictionary(self):
+        # A project may refuse a word the standard approves. That decision has
+        # to be read before anything can permit the word.
+        output = self.lint_text("Check the color of the part.\n",
+                                deny={"color": "colour"})
+        self.assertIn("rule H.4", output)
+        self.assertIn("colour", output)
+
+    def test_deny_with_no_replacement_still_reports(self):
+        output = self.lint_text("A synergy of teams.\n", deny={"synergy": ""})
+        self.assertIn("rule H.4", output)
+
+    def test_allow_matches_the_plural_of_a_declared_word(self):
+        output = self.lint_text("The endpoints are ready.\n", allow=["endpoint"])
+        self.assertNotIn("endpoint", output)
+
     def test_noun_cluster_is_flagged(self):
         output = self.lint_text(
             "Replace the engine oil pressure sensor cable now.\n",
-            glossary=["engine", "oil", "pressure", "sensor", "cable"],
+            allow=["engine", "oil", "pressure", "sensor", "cable"],
         )
         self.assertIn("rule 2.1", output)
 
@@ -581,7 +643,7 @@ class Hook(unittest.TestCase):
 
     def mark(self, **values) -> None:
         (self.repo / ".ste-writing.json").write_text(
-            json.dumps({**values})
+            json.dumps({"words": {"allow": values.get("glossary", [])}})
         )
 
     def call(self, stop_hook_active: bool = False) -> dict:

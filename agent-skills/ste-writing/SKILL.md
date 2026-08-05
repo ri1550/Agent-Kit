@@ -78,7 +78,7 @@ Follow this in order. Step 3 is not optional and its result is not negotiable.
    python3 <skill>/scripts/ste-lint.py --rule 3.6
    ```
 
-   The ids `H.1`, `H.2`, and `H.3` are house rules. ASD did not write them, so
+   An id that starts with `H` is a house rule. ASD did not write those, so
    there is no rule text to read and the suggestion is the whole answer.
 
 5. **Run the linter again.** Repeat until it exits 0.
@@ -88,17 +88,27 @@ Follow this in order. Step 3 is not optional and its result is not negotiable.
 If a finding is wrong, say which one and why. Do not ignore it quietly, and do
 not edit `scripts/ste_policy.py` to remove it.
 
-## A word this project uses
+## The words this project decided on
 
-A word the STE dictionary does not hold is not always a mistake. Every project
-has its own nouns. Add one when you are sure it is a real term here:
+`.ste-writing.json` holds three word sections, and the linter reads them in this
+order. Each one is a decision. Record it once, and stop fixing the same word
+in every file.
+
+| Section | Effect | Command |
+|---|---|---|
+| `deny` | Refuses a word here, even one the standard approves | `--deny utilise use` |
+| `allow` | Lets you use a word the dictionary does not hold, and teaches rule 2.1 that it is a noun | `--add-word endpoint webhook` |
+| `prefer` | One name for one thing, per rule 1.11 | `--prefer repository repo` |
+
+To see every word this project trips on, grouped so you decide each one once:
 
 ```bash
-python3 <skill>/scripts/ste-lint.py --add-word endpoint webhook
+python3 <skill>/scripts/ste-lint.py --triage docs/
 ```
 
-That writes to `.ste-writing.json`. Use it for the words the project decided on,
-not for the words you did not want to fix.
+Use `allow` for the words the project decided on, not for the words you did not
+want to fix. A word cannot be in both `allow` and `deny`, and the linter refuses
+a marker file that says so.
 
 ## What the linter cannot check
 
@@ -158,6 +168,7 @@ The linter is the gate, not the method. These keep most findings from happening.
 | `scripts/remind.py` | Prints the checklist above. Never blocks |
 | `hooks/ste-hook.py` | Stop hook. Inert unless the repository has a marker file |
 | `data/ste-dictionary.json` | The words of the standard. The build step writes it |
+| `.ste-writing.json` | The marker, and this project's own words |
 
 Two dictionaries, and they do not mix. `data/ste-dictionary.json` holds what ASD
 wrote, and only the build step writes there. `.ste-writing.json` holds what the

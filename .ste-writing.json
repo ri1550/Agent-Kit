@@ -1,40 +1,48 @@
 {
-  "_comment": [
-    "This repository writes its own prose in STE. Delete this file to opt out.",
-    "The glossary holds the words this project uses that the STE dictionary does",
-    "not, per rules 1.6 and 1.8. A word here is one we decided on, not one we",
-    "could not be bothered to fix."
-  ],
+  "meta": {
+    "written_by": "ste-lint.py --init",
+    "version": "v1.0.0",
+    "note": [
+      "This repository writes its own prose in STE. Delete this file to opt out.",
+      "The words below are decisions, not words we could not be bothered to fix."
+    ]
+  },
 
-  "glossary": [
-    "agent", "API", "argument", "artifact", "ASD", "ASD-STE100", "branch",
-    "cache", "checker", "CLI", "code", "commit", "config", "dependency",
-    "dictionary", "directory", "documentation", "extractor", "file", "flag",
-    "glossary", "hook", "identifier", "JSON", "linter", "locale", "log",
-    "markdown", "marker", "MCP", "merge", "paragraph", "parser", "path",
-    "pdftotext", "poppler", "prose", "Python", "README", "repository",
-    "request", "runbook", "schema", "script", "server", "session", "skill",
-    "STE", "symlink", "syntax", "token", "workflow"
-  ],
+  "settings": {
+    "locale": "",
+    "exclude": [
+      "LICENSE",
+      "**/data/**",
+      "**/node_modules/**"
+    ],
+    "_note": [
+      "No locale, so there is no spelling check. This repository writes American",
+      "English, which is what ASD-STE100 rule 1.14 asks for."
+    ]
+  },
 
-  "_glossary_note": [
-    "'request' is here for 'pull request', which is a technical noun in this",
-    "field. The standard replaces the plain verb 'request' with TELL or WRITE."
-  ],
+  "words": {
+    "allow": [
+      "agent", "API", "argument", "artifact", "ASD", "ASD-STE100", "branch",
+      "cache", "checker", "CLI", "code", "commit", "config", "dependency",
+      "dictionary", "directory", "documentation", "extractor", "file", "flag",
+      "glossary", "hook", "identifier", "JSON", "linter", "locale", "log",
+      "markdown", "marker", "MCP", "merge", "paragraph", "parser", "path",
+      "pdftotext", "poppler", "prose", "Python", "README", "repository",
+      "request", "runbook", "schema", "script", "server", "session", "skill",
+      "STE", "symlink", "syntax", "token", "workflow"
+    ],
 
-  "one_name_for_one_thing": {},
+    "deny": {},
 
-  "locale": "",
+    "prefer": {},
 
-  "_locale_note": [
-    "Empty, so there is no spelling check. This repository writes American",
-    "English, which is what ASD-STE100 rule 1.14 asks for.",
-    "To write another variety, run: localize.py --en-GB"
-  ],
-
-  "exclude": [
-    "LICENSE",
-    "**/data/**",
-    "**/node_modules/**"
-  ]
+    "_note": [
+      "'request' is allowed for 'pull request', which is a technical noun in",
+      "this field. The standard replaces the plain verb 'request' with TELL or",
+      "WRITE.",
+      "",
+      "To see what this repository trips on: ste-lint.py --triage <paths>"
+    ]
+  }
 }

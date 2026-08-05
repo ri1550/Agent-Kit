@@ -99,8 +99,21 @@ python3 agent-skills/ste-writing/scripts/ste-lint.py --init
 ```
 
 That writes `.ste-writing.json`, which is the marker the hook looks for and the
-place the project's own words live. Commit it. Delete it to opt out. Add words
-to it with `--add-word`, or by hand.
+place the project's own words live. Commit it. Delete it to opt out.
+
+It has the same shape as the dictionary: `meta` first, so `head` on it says what
+wrote the file, then `settings` and `words`. The `words` section holds three
+decisions, which the linter reads in order:
+
+```bash
+ste-lint.py --deny utilise use          # refuse a word here, even an approved one
+ste-lint.py --add-word endpoint         # permit a word the dictionary lacks
+ste-lint.py --prefer repository repo    # one name for one thing
+ste-lint.py --triage docs/              # every word to decide, grouped
+```
+
+There is no stored list of flagged words. `--triage` computes it from the prose,
+so it cannot claim a word is a problem after you delete the sentence.
 
 **3. Install the hook, once.** Merge
 `agent-skills/ste-writing/hooks/settings-snippet.json` into
