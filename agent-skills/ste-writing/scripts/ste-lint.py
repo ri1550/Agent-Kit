@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Check prose against ASD-STE100 Simplified Technical English.
 
-    ste-lint.py --mode ste-strict  README.md
-    ste-lint.py --mode ste-general --format json docs/*.md
-    cat draft.md | ste-lint.py --mode ste-general -
+    ste-lint.py README.md
+    ste-lint.py --format json docs/*.md
+    cat draft.md | ste-lint.py -
+    ste-lint.py --init            write .ste-writing.json and switch this repo on
 
 Exit codes, which are the point of this script:
 
@@ -31,11 +32,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ste_data  # noqa: E402  (needs the path above)
+import ste_policy  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 SKILL_DIR = HERE.parent
 DATA = SKILL_DIR / "data"
-ASSETS = SKILL_DIR / "assets"
+
 MARKER = ".ste-writing.json"
 
 EXIT_CLEAN, EXIT_ENFORCED, EXIT_FLAGGED, EXIT_ERROR = 0, 1, 2, 3
@@ -101,6 +103,7 @@ class Finding:
     text: str
     message: str
     tier: str
+    short: str = ""
     suggestion: str = ""
 
     def as_dict(self) -> dict:
@@ -112,6 +115,9 @@ class Finding:
             "column": self.column,
             "text": self.text,
             "message": self.message,
+            # The rule in one line. Usually enough to fix the finding without
+            # opening the rule at all.
+            "short": self.short,
             "suggestion": self.suggestion,
         }
 
@@ -337,24 +343,24 @@ def is_instruction(text: str, base_verbs: set[str]) -> bool:
 # --------------------------------------------------------------------------
 
 class Linter:
-    def __init__(self, mode: str, data: dict, config: dict) -> None:
-        self.mode = mode
-        self.tiers = data["tiers"]
+    def __init__(self, data: dict, config: dict) -> None:
         self.config = config
 
         vocabulary = data["vocabulary"]
         self.approved_forms: set[str] = vocabulary.approved_forms
         self.approved_lemmas: dict = vocabulary.approved_lemmas
-        # Every non-approved word, used by ste-strict to suggest a replacement
-        # once the allowlist has already rejected the word.
+        # Every non-approved word the standard lists, used for the replacement
+        # it suggests once a word has already been flagged.
         self.alternative_forms: dict[str, str] = vocabulary.alternative_forms
-        # The subset ste-general fails on, because it does not run the allowlist.
+        # The subset the linter fails on. See select_slop for why it is a subset.
         self.slop_forms: dict[str, str] = vocabulary.slop_forms
         self.phrasal: list[str] = vocabulary.phrasal
         self.replacements = vocabulary.replacements
-        self.marketing: set[str] = set(data["house"]["marketing"])
-        self.hedges: list[str] = data["house"]["hedges"]
-        self.spellings: dict = data["spelling"]["spellings"]
+        self.marketing: set[str] = set(ste_policy.MARKETING)
+        self.hedges: tuple[str, ...] = ste_policy.HEDGES
+        # Empty unless the project selected a locale. See localize.py.
+        self.spellings: dict[str, str] = vocabulary.spellings
+        self.locale: str = vocabulary.locale
 
         self.glossary = {word.lower() for word in config.get("glossary", [])}
         self.synonyms = {
@@ -374,15 +380,18 @@ class Linter:
     # -- helpers -----------------------------------------------------------
 
     def active(self, rule: str) -> bool:
-        """True when a rule can produce a finding in the current mode.
+        """True when a rule can produce a finding.
 
-        A flagged rule always reports, because it never fails the run. An
-        enforced rule reports only in the modes that enforce it.
+        There is one mode, so this is only about whether the rule has a check at
+        all. Rule 1.14 is the exception: it needs a locale, and the skill ships
+        no spelling list.
         """
-        meta = self.tiers.get(rule, {})
-        if meta.get("tier") == "flagged":
-            return True
-        return self.mode in meta.get("modes", [])
+        entry = ste_policy.RULES.get(rule)
+        if entry is None or entry.check is None:
+            return False
+        if rule == "1.14":
+            return bool(self.spellings)
+        return True
 
     def make(self, rule: str, check: str, document: Document, offset: int,
              text: str, message: str, suggestion: str = "") -> Finding:
@@ -394,7 +403,8 @@ class Linter:
             column=column,
             text=re.sub(r"\s+", " ", text).strip(),
             message=message,
-            tier=self.tiers.get(rule, {}).get("tier", "flagged"),
+            tier=entry.tier if (entry := ste_policy.RULES.get(rule)) else "flagged",
+            short=entry.short if entry else "",
             suggestion=suggestion,
         )
 
@@ -449,8 +459,8 @@ class Linter:
 
             if self.active("1.14") and lower in self.spellings:
                 findings.append(self.make(
-                    "1.14", "british_spelling", document, offset, word,
-                    "British spelling.",
+                    "1.14", "locale_spelling", document, offset, word,
+                    f"Not the spelling this project uses ({self.locale}).",
                     f"Write “{self.spellings[lower]}”.",
                 ))
                 continue
@@ -471,46 +481,20 @@ class Linter:
                 ))
                 continue
 
-            # A word in the project glossary is a technical noun that this
-            # project decided on, per rules 1.6 and 1.8. It answers every
-            # question about whether the dictionary holds the word, so the
-            # checks below have nothing left to say about it.
+            # A word in the project glossary is one this project decided on,
+            # per rules 1.6 and 1.8. That answers the question the slop check
+            # is about to ask, so there is nothing left to say about it.
             if self.in_glossary(lower):
                 continue
 
-            alternative = self.alternative_forms.get(lower)
-            slop = self.slop_forms.get(lower)
-
-            if self.active("H.2") and slop:
+            if self.active("H.2") and (slop := self.slop_forms.get(lower)):
                 findings.append(self.make(
                     "H.2", "unapproved_alternative", document, offset, word,
                     f"“{slop}” is not an approved word.",
-                    self.replacement_hint(slop),
+                    self.replacement_hint(slop)
+                    or f"Replace it, or add it to the glossary in {MARKER} "
+                       "if this project means it as a technical noun.",
                 ))
-                continue
-
-            if not self.active("1.1") or self.known_word(word):
-                continue
-
-            # An approved lemma in an unapproved form is rule 1.4, not 1.1. The
-            # word is right and the form is wrong, which is a different fix and
-            # a different page of the standard.
-            if self.known_lemma(lower):
-                if self.active("1.4"):
-                    findings.append(self.make(
-                        "1.4", "unapproved_form", document, offset, word,
-                        f"“{word}” is not an approved form of this word.",
-                        "Use a form that the dictionary gives.",
-                    ))
-                continue
-
-            findings.append(self.make(
-                "1.1", "unapproved_word", document, offset, word,
-                f"“{word}” is not in the STE dictionary.",
-                self.replacement_hint(alternative)
-                or f"Replace it, or add it to the glossary in {MARKER} "
-                   "if it is a technical noun.",
-            ))
         return findings
 
     # -- patterns ----------------------------------------------------------
@@ -652,17 +636,12 @@ def totals(results: dict[str, list[Finding]]) -> tuple[int, int]:
     return enforced, len(every) - enforced
 
 
-def describe(modes: dict[str, str]) -> str:
-    used = sorted(set(modes.values()))
-    return used[0] if len(used) == 1 else ", ".join(used)
-
-
-def report_text(results: dict[str, list[Finding]], modes: dict[str, str]) -> str:
+def report_text(results: dict[str, list[Finding]]) -> str:
     lines: list[str] = []
     for path, findings in results.items():
         if not findings:
             continue
-        lines.append(f"{path}  [{modes.get(path, '')}]")
+        lines.append(path)
         for finding in findings:
             marker = "error" if finding.tier == "enforced" else "warn "
             lines.append(
@@ -670,25 +649,27 @@ def report_text(results: dict[str, list[Finding]], modes: dict[str, str]) -> str
                 f"  rule {finding.rule}  {finding.message}"
             )
             lines.append(f"        “{finding.text}”")
+            # A house rule's message already is its statement, so repeating the
+            # short line there would be noise.
+            if finding.short and finding.rule not in ste_policy.HOUSE_RULES:
+                lines.append(f"        {finding.short}")
             if finding.suggestion:
                 lines.append(f"        -> {finding.suggestion}")
         lines.append("")
 
     enforced, flagged = totals(results)
     if not enforced and not flagged:
-        return f"clean ({describe(modes)})\n"
-    lines.append(f"{enforced} enforced, {flagged} flagged ({describe(modes)})")
+        return "clean\n"
+    lines.append(f"{enforced} enforced, {flagged} flagged")
     if enforced:
-        lines.append("Find the rule id in data/rule-index.md, then read only that rule.")
+        lines.append("For the full rule, run: ste-lint.py --rule <id>")
     return "\n".join(lines) + "\n"
 
 
-def report_json(results: dict[str, list[Finding]], modes: dict[str, str]) -> str:
+def report_json(results: dict[str, list[Finding]]) -> str:
     enforced, flagged = totals(results)
     return json.dumps(
         {
-            "mode": describe(modes),
-            "modes": modes,
             "enforced": enforced,
             "flagged": flagged,
             "files": {
@@ -699,6 +680,49 @@ def report_json(results: dict[str, list[Finding]], modes: dict[str, str]) -> str
         indent=1,
         ensure_ascii=False,
     ) + "\n"
+
+
+def print_rule(rule_id: str) -> int:
+    """Print one rule: its tier, its statement, and the standard's own text."""
+    entry = ste_policy.RULES.get(rule_id)
+    if entry is None:
+        print(f"ste-lint: no rule {rule_id}", file=sys.stderr)
+        return EXIT_ERROR
+
+    print(f"Rule {rule_id} — {entry.tier}" + (f" (check: {entry.check})" if entry.check else ""))
+    print(entry.short)
+
+    if rule_id in ste_policy.HOUSE_RULES:
+        print()
+        print("This is a house rule. ASD did not write it, so there is no rule")
+        print("text to read. The finding's suggestion is the whole answer.")
+        return EXIT_CLEAN
+
+    body = read_rule_body(rule_id)
+    if body:
+        print()
+        print(body)
+    else:
+        print()
+        print("The rule text is not built. Run build-dictionary.py to get it.")
+    return EXIT_CLEAN
+
+
+def read_rule_body(rule_id: str) -> str:
+    """Pull one rule out of the built rule files."""
+    section = rule_id.split(".")[0]
+    for path in sorted((DATA / "rules").glob(f"{section.zfill(2)}-*.md")):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        match = re.search(
+            rf"^## Rule {re.escape(rule_id)}\s*$(.*?)(?=^## Rule |\Z)",
+            text, re.M | re.S,
+        )
+        if match:
+            body = match.group(1)
+            # print_rule already gave the tier and the statement.
+            body = re.sub(r"^- Tier: .*$", "", body, flags=re.M)
+            return re.sub(r"\n{3,}", "\n\n", body).strip()
+    return ""
 
 
 # --------------------------------------------------------------------------
@@ -722,22 +746,78 @@ def excluded(path: Path, config: dict) -> bool:
     return matches(path, config.get("exclude", []))
 
 
-def mode_for(path: Path, config: dict, override: str | None) -> str:
-    """Decide the mode for one file.
+MARKER_TEMPLATE = """{
+  "_comment": [
+    "This file switches ste-writing on for this repository, and holds the words",
+    "this project uses that the STE dictionary does not.",
+    "",
+    "Commit it. The glossary is a project asset, and a teammate who clones the",
+    "repository should get the opt-in and the words together. Delete the file to",
+    "opt out. Nothing else has to change.",
+    "",
+    "Written by: ste-lint.py --init"
+  ],
 
-    The mode belongs to the text, not to the repository. A runbook is strict
-    even when the repository around it is general, so `strict_paths` in the
-    marker file names the paths that get `ste-strict`. Without this, the hook
-    would gate every file at the repository mode, and strict would go back to
-    being advice for exactly the safety text it exists for.
+  "glossary": [],
 
-    An explicit --mode wins, so a person checking one file by hand still can.
-    """
-    if override:
-        return override
-    if matches(path, config.get("strict_paths", [])):
-        return "ste-strict"
-    return config.get("mode") or "ste-general"
+  "_glossary_comment": [
+    "The words this project uses that STE does not approve, per rules 1.6 and",
+    "1.8. A word here is one you decided on, not one you could not be bothered",
+    "to fix. Add to it with: ste-lint.py --add-word <word> ...",
+    "",
+    "For a long list, use \\"glossary_file\\" instead and point it at a text file",
+    "of one word per line, relative to this file."
+  ],
+
+  "one_name_for_one_thing": {},
+
+  "_one_name_comment": [
+    "Rule 1.11, one name for one thing. Each key is the name to use, and its",
+    "list holds the names it replaces, for example:",
+    "  \\"repository\\": [\\"repo\\"]",
+    "Empty by default, because that pair warns on every \\"repo\\" you have ever",
+    "written and is only useful once you have decided that it matters."
+  ],
+
+  "locale": "",
+
+  "_locale_comment": [
+    "Leave empty for no spelling check. Set it to a locale you have generated,",
+    "for example \\"en-GB\\", and the linter reads data/locale-en-GB.json.",
+    "Generate one with: localize.py --en-GB"
+  ],
+
+  "exclude": [
+    "LICENSE",
+    "**/node_modules/**"
+  ]
+}
+"""
+
+
+def write_marker(target: Path) -> int:
+    """Create the marker file, which is how a repository opts in."""
+    if target.exists():
+        print(f"ste-lint: {target} already exists, leaving it alone", file=sys.stderr)
+        return EXIT_ERROR
+    target.write_text(MARKER_TEMPLATE, encoding="utf-8")
+    print(f"wrote {target}")
+    print("ste-writing is now on for this repository. Commit the file.")
+    return EXIT_CLEAN
+
+
+def add_words(target: Path, words: list[str]) -> int:
+    """Append to the project glossary, keeping the file readable."""
+    if not target.is_file():
+        print(f"ste-lint: no {target}. Run --init first.", file=sys.stderr)
+        return EXIT_ERROR
+    config = json.loads(target.read_text(encoding="utf-8"))
+    glossary = config.get("glossary", [])
+    added = [w for w in words if w.lower() not in {g.lower() for g in glossary}]
+    config["glossary"] = sorted(glossary + added, key=str.lower)
+    target.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    print(f"added {len(added)} word(s) to {target}: {', '.join(added) or 'none'}")
+    return EXIT_CLEAN
 
 
 def main() -> int:
@@ -745,27 +825,45 @@ def main() -> int:
         description="Check prose against ASD-STE100 Simplified Technical English.",
     )
     parser.add_argument("files", nargs="*", help="files to check, or - for standard input")
-    parser.add_argument("--mode", choices=["ste-strict", "ste-general"], default=None)
     parser.add_argument("--format", choices=["text", "json"], default="text")
     parser.add_argument("--config", type=Path, default=None, help=f"path to {MARKER}")
+    parser.add_argument(
+        "--init", action="store_true", help=f"write {MARKER} here and switch this repo on"
+    )
+    parser.add_argument(
+        "--add-word", nargs="+", metavar="WORD", help="add words to the project glossary"
+    )
+    parser.add_argument("--rule", metavar="ID", help="print one rule, for example 3.6")
     parser.add_argument(
         "--fail-on-flagged",
         action="store_true",
         help="exit 1 on flagged findings too, not only enforced ones",
     )
     args = parser.parse_args()
+
+    if args.init:
+        return write_marker(Path.cwd() / MARKER)
+    if args.add_word:
+        return add_words(args.config or (find_config(Path.cwd()) or Path.cwd() / MARKER),
+                         args.add_word)
+
     targets = args.files or ["-"]
 
     try:
         anchor = Path(targets[0]) if targets[0] != "-" else Path.cwd()
         config = load_config(args.config, anchor)
-        house = load_json(ASSETS / "house-style.json", "The house style list")
         dictionary = load_json(DATA / "ste-dictionary.json", "The STE dictionary")
+        locale = None
+        if config.get("locale"):
+            locale = load_json(
+                DATA / f"locale-{config['locale']}.json",
+                f"The {config['locale']} locale",
+            )
         try:
             # The slop list and the phrasal verb list are derived here rather
-            # than stored, so a change to house-style.json takes effect at once
+            # than stored, so a change to ste_policy.py takes effect at once
             # instead of waiting for a rebuild.
-            vocabulary = ste_data.Vocabulary(dictionary, house)
+            vocabulary = ste_data.Vocabulary(dictionary, locale)
         except ste_data.VersionError as error:
             raise LintError(
                 f"The STE dictionary cannot be read: {error}.\n"
@@ -773,28 +871,16 @@ def main() -> int:
                 f"  python3 {HERE / 'build-dictionary.py'} "
                 "--pdf /path/to/ASD-STE100_ISSUE9.pdf"
             ) from error
-        data = {
-            "vocabulary": vocabulary,
-            "house": house,
-            "spelling": load_json(ASSETS / "spelling-en-us.json", "The spelling list"),
-            "tiers": load_json(ASSETS / "rule-tiers.json", "The rule tier table"),
-        }
-        # One linter per mode, built on demand, so a run can mix a strict
-        # runbook and a general README without loading the data twice.
-        linters: dict[str, Linter] = {}
 
-        def linter_for(mode: str) -> Linter:
-            if mode not in linters:
-                linters[mode] = Linter(mode, data, config)
-            return linters[mode]
+        linter = Linter({"vocabulary": vocabulary}, config)
+
+        if args.rule:
+            return print_rule(args.rule)
 
         results: dict[str, list[Finding]] = {}
-        modes: dict[str, str] = {}
         for name in targets:
             if name == "-":
-                mode = args.mode or config.get("mode") or "ste-general"
-                modes["<stdin>"] = mode
-                results["<stdin>"] = linter_for(mode).lint(
+                results["<stdin>"] = linter.lint(
                     build_document("<stdin>", sys.stdin.read())
                 )
                 continue
@@ -803,9 +889,7 @@ def main() -> int:
                 raise LintError(f"no such file: {name}")
             if excluded(path, config):
                 continue
-            mode = mode_for(path, config, args.mode)
-            modes[name] = mode
-            results[name] = linter_for(mode).lint(
+            results[name] = linter.lint(
                 build_document(name, path.read_text(encoding="utf-8", errors="replace"))
             )
     except (LintError, OSError, json.JSONDecodeError, KeyError) as error:
@@ -813,8 +897,7 @@ def main() -> int:
         return EXIT_ERROR
 
     print(
-        report_json(results, modes) if args.format == "json"
-        else report_text(results, modes),
+        report_json(results) if args.format == "json" else report_text(results),
         end="",
     )
 

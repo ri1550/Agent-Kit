@@ -13,10 +13,6 @@
     "The command uses $HOME rather than ~, because ~ only expands when the",
     "command goes through a shell. An absolute path works too.",
     "",
-    "The hook passes no --mode. The linter reads the mode for each file from the",
-    "marker, so a path listed in 'strict_paths' is gated at ste-strict even in a",
-    "repository whose default is ste-general.",
-    "",
     "Stop hooks do not take matchers. They fire on every turn that ends."
   ],
 

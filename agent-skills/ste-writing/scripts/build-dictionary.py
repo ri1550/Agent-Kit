@@ -29,6 +29,7 @@ from collections import OrderedDict
 from pathlib import Path
 
 import ste_data
+import ste_policy
 
 BUILDER = Path(__file__).name
 
@@ -432,7 +433,7 @@ def statement_of(rule_text: str) -> str:
     return (match.group(1) if match else flat[:200]).strip()
 
 
-def write_rules(out: Path, rules: dict[str, list[tuple[str, str]]], tiers: dict) -> None:
+def write_rules(out: Path, rules: dict[str, list[tuple[str, str]]]) -> None:
     rules_dir = out / "rules"
     rules_dir.mkdir(parents=True, exist_ok=True)
     for section, entries in sorted(rules.items()):
@@ -444,9 +445,9 @@ def write_rules(out: Path, rules: dict[str, list[tuple[str, str]]], tiers: dict)
             "",
         ]
         for rule_id, body in entries:
-            meta = tiers.get(rule_id, {})
-            tier = meta.get("tier", "unclassified")
-            check = meta.get("check")
+            entry = ste_policy.RULES.get(rule_id)
+            tier = entry.tier if entry else "unclassified"
+            check = entry.check if entry else None
             lines.append(f"## Rule {rule_id}")
             lines.append("")
             lines.append(f"- Tier: **{tier}**" + (f" (linter check `{check}`)" if check else ""))
@@ -458,7 +459,7 @@ def write_rules(out: Path, rules: dict[str, list[tuple[str, str]]], tiers: dict)
         )
 
 
-def write_index(out: Path, index: list[tuple[str, str]], rules: dict, tiers: dict) -> None:
+def write_index(out: Path, index: list[tuple[str, str]], rules: dict) -> None:
     lines = [
         "# Rule index",
         "",
@@ -470,7 +471,7 @@ def write_index(out: Path, index: list[tuple[str, str]], rules: dict, tiers: dic
     for section, entries in sorted(rules.items()):
         name = SECTION_NAMES.get(section, f"section-{section}")
         for rule_id, body in entries:
-            tier = tiers.get(rule_id, {}).get("tier", "-")
+            tier = ste_policy.RULES[rule_id].tier if rule_id in ste_policy.RULES else "-"
             statement = statement_of(body).replace("|", "\\|")
             lines += [f"| {rule_id} | {tier} | {statement} | `rules/{section.zfill(2)}-{name}.md` |"]
 
@@ -546,7 +547,6 @@ def main() -> int:
     rules = parse_rules(pages)
     index = parse_subject_index(pages)
 
-    tiers = json.loads((SKILL_DIR / "assets" / "rule-tiers.json").read_text())
 
     approved_forms = {form for entry in approved.values() for form in entry["forms"]}
 
@@ -617,8 +617,8 @@ def main() -> int:
     (out / "ste-dictionary.json").write_text(
         json.dumps(dictionary, indent=1), encoding="utf-8"
     )
-    write_rules(out, rules, tiers)
-    write_index(out, index, rules, tiers)
+    write_rules(out, rules)
+    write_index(out, index, rules)
 
     # An older build left several files here. Remove them so a stale copy cannot
     # be read by mistake.

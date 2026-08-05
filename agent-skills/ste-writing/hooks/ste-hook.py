@@ -95,6 +95,7 @@ def summarize(report: dict, limit: int = MAX_REPORTED) -> str:
                 f"  {path}:{finding['line']}:{finding['column']}  "
                 f"rule {finding['rule']}  {finding['message']} "
                 f"“{finding['text']}”"
+                + (f" | {finding['short']}" if finding.get("short") else "")
                 + (f" -> {finding['suggestion']}" if finding.get("suggestion") else "")
             )
             shown += 1
@@ -139,9 +140,6 @@ def main() -> int:
     if not files:
         allow()
 
-    # No --mode here on purpose. The linter resolves the mode for each file from
-    # the marker, so a runbook listed in "strict_paths" is gated at ste-strict
-    # even when the repository around it is ste-general.
     try:
         result = subprocess.run(
             [
@@ -196,14 +194,13 @@ def main() -> int:
         )
 
     block(
-        f"ste-writing ({report.get('mode', 'ste-general')}): "
-        f"{report.get('enforced', 0)} enforced violation(s) in prose that differs "
-        "from HEAD.\n\n"
+        f"ste-writing: {report.get('enforced', 0)} enforced violation(s) in "
+        "prose that differs from HEAD.\n\n"
         f"{summarize(report)}\n\n"
         "Fix each one, then check your work:\n"
         f"  python3 {LINTER} <file>\n"
-        "For any rule id above, read only that rule in "
-        "agent-skills/ste-writing/data/rule-index.md."
+        "For the full text of any rule id above:\n"
+        f"  python3 {LINTER} --rule <id>"
     )
     return 0
 

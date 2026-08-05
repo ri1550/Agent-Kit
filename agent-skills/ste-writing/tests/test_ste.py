@@ -13,6 +13,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -40,6 +41,8 @@ sys.path.insert(0, str(SCRIPTS))
 lint = load("ste_lint", LINTER)
 build = load("ste_build", SCRIPTS / "build-dictionary.py")
 data_module = load("ste_data_module", SCRIPTS / "ste_data.py")
+policy = load("ste_policy_module", SCRIPTS / "ste_policy.py")
+localize = load("ste_localize", SCRIPTS / "localize.py")
 
 DICTIONARY = DATA / "ste-dictionary.json"
 have_data = DICTIONARY.is_file()
@@ -154,6 +157,197 @@ class Version(unittest.TestCase):
             data_module.check_version({"built_by": "build-dictionary.py 2"})
 
 
+class Policy(unittest.TestCase):
+    """The rule table and the linter have to agree about what exists."""
+
+    def setUp(self):
+        self.source = LINTER.read_text(encoding="utf-8")
+
+    def test_every_declared_check_is_emitted_somewhere(self):
+        # This is the bug the JSON version could not catch: a check name nobody
+        # validated, so a typo silently switched a rule off and the tests passed.
+        for rule, entry in policy.RULES.items():
+            if entry.check:
+                self.assertIn(f'"{entry.check}"', self.source, f"{rule}: {entry.check}")
+
+    # Text built to set off as many checks as one document can. Reading the
+    # source for this does not work: most checks are emitted from tables, so a
+    # regex over self.make() sees 6 of the 16 and passes for the wrong reason.
+    TRIGGERS = (
+        "We utilized a comprehensive methodology; it was designed to ensure success.\n"
+        "The team will spin up the service and it is worth noting we are testing it.\n"
+        "The report has been reviewed and don't forget the check.\n"
+        "Do the maintenance of the unit and perform an analysis of the log.\n"
+        "This is a very long descriptive sentence that keeps going and going well "
+        "past the limit of twenty five words in total length here.\n"
+        "Install the pump and then close the valve and then open the drain and "
+        "then start the engine and check it.\n"
+    )
+
+    @needs_data
+    def test_every_check_the_linter_emits_is_declared(self):
+        declared = {entry.check for entry in policy.RULES.values() if entry.check}
+        # An empty config, so the repository's own glossary cannot suppress a
+        # check and quietly weaken this test.
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / ".ste-writing.json"
+            config.write_text("{}")
+            report = json.loads(
+                run_linter(
+                    "--config", str(config), "--format", "json", "-",
+                    stdin=self.TRIGGERS,
+                ).stdout
+            )
+        emitted = {f["check"] for findings in report["files"].values() for f in findings}
+        self.assertGreaterEqual(len(emitted), 10, "the trigger text stopped working")
+        self.assertEqual(emitted - declared, set())
+        for findings in report["files"].values():
+            for finding in findings:
+                self.assertIn(finding["rule"], policy.RULES)
+                self.assertEqual(finding["tier"], policy.RULES[finding["rule"]].tier)
+                self.assertEqual(finding["short"], policy.RULES[finding["rule"]].short)
+
+    def test_every_rule_has_a_statement(self):
+        for rule, entry in policy.RULES.items():
+            self.assertTrue(entry.short.strip(), rule)
+
+    def test_tiers_are_known(self):
+        for rule, entry in policy.RULES.items():
+            self.assertIn(entry.tier, {"enforced", "flagged", "judgment", "counting"}, rule)
+
+    def test_a_rule_with_a_check_is_never_judgment(self):
+        for rule, entry in policy.RULES.items():
+            if entry.check:
+                self.assertNotEqual(entry.tier, "judgment", rule)
+
+    def test_house_rules_are_declared(self):
+        for rule in policy.HOUSE_RULES:
+            self.assertIn(rule, policy.RULES)
+
+
+class Locale(unittest.TestCase):
+    """Rule 1.14 is off until a locale exists, and a bad locale is refused."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+
+    @needs_data
+    def test_the_plan_names_the_traps(self):
+        dictionary = json.loads(DICTIONARY.read_text())
+        plan = localize.plan("en-GB", dictionary)
+        self.assertIn("en-GB", plan)
+        self.assertIn("locale-en-GB.json", plan)
+        # The direction of the map is the mistake this pass most easily makes.
+        self.assertIn("The key is the word to flag", plan)
+
+    @needs_data
+    def test_the_candidate_list_holds_no_generated_inflections(self):
+        # A loose finder produced "woulded" and "whicheverrer", and a list that
+        # long stops being reviewed.
+        dictionary = json.loads(DICTIONARY.read_text())
+        words = localize.candidates(dictionary)
+        self.assertLess(len(words), 120, "candidate list is too long to review")
+        for junk in ("woulded", "whicheverrer", "withdrawed"):
+            self.assertNotIn(junk, words)
+
+    @needs_data
+    def test_a_backwards_map_is_refused(self):
+        dictionary = json.loads(DICTIONARY.read_text())
+        target = DATA / "locale-xx-YY.json"
+        target.write_text(json.dumps({
+            "meta": {"locale": "xx-YY"},
+            "spellings": {"colour": "color"},
+        }))
+        try:
+            self.assertEqual(localize.check("xx-YY", dictionary), 1)
+        finally:
+            target.unlink(missing_ok=True)
+
+    @needs_data
+    def test_a_good_map_is_accepted_and_switches_rule_114_on(self):
+        dictionary = json.loads(DICTIONARY.read_text())
+        target = DATA / "locale-xx-YY.json"
+        target.write_text(json.dumps({
+            "meta": {"locale": "xx-YY"},
+            "spellings": {"color": "colour", "center": "centre"},
+        }))
+        config = self.dir / ".ste-writing.json"
+        config.write_text(json.dumps({"locale": "xx-YY"}))
+        page = self.dir / "x.md"
+        page.write_text("The color of the center.\n")
+        try:
+            self.assertEqual(localize.check("xx-YY", dictionary), 0)
+            result = run_linter("--config", str(config), str(page))
+            self.assertIn("rule 1.14", result.stdout)
+            self.assertIn("colour", result.stdout)
+        finally:
+            target.unlink(missing_ok=True)
+
+
+class Marker(unittest.TestCase):
+    """--init and --add-word, so the skill can opt a repository in itself."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_init_writes_a_valid_marker(self):
+        result = subprocess.run(
+            [sys.executable, str(LINTER), "--init"],
+            cwd=self.dir, capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, CLEAN, result.stderr)
+        written = self.dir / ".ste-writing.json"
+        self.assertTrue(written.is_file())
+        config = json.loads(written.read_text())
+        self.assertEqual(config["glossary"], [])
+        self.assertEqual(config["locale"], "")
+
+    def test_init_refuses_to_overwrite(self):
+        (self.dir / ".ste-writing.json").write_text("{}")
+        result = subprocess.run(
+            [sys.executable, str(LINTER), "--init"],
+            cwd=self.dir, capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, ERROR)
+
+    def test_add_word_appends_without_duplicating(self):
+        marker = self.dir / ".ste-writing.json"
+        marker.write_text(json.dumps({"glossary": ["webhook"]}))
+        for _ in range(2):
+            subprocess.run(
+                [sys.executable, str(LINTER), "--config", str(marker),
+                 "--add-word", "endpoint", "webhook"],
+                capture_output=True, text=True,
+            )
+        self.assertEqual(
+            json.loads(marker.read_text())["glossary"], ["endpoint", "webhook"]
+        )
+
+
+@needs_data
+class RuleLookup(unittest.TestCase):
+    """--rule replaces reading a section file by hand."""
+
+    def test_a_real_rule_prints_its_tier_and_body(self):
+        result = run_linter("--rule", "3.6")
+        self.assertEqual(result.returncode, CLEAN)
+        self.assertIn("Rule 3.6", result.stdout)
+        self.assertIn("enforced", result.stdout)
+        self.assertIn("active voice", result.stdout.lower())
+
+    def test_a_house_rule_says_there_is_no_body(self):
+        result = run_linter("--rule", "H.2")
+        self.assertEqual(result.returncode, CLEAN)
+        self.assertIn("house rule", result.stdout.lower())
+
+    def test_an_unknown_rule_is_an_error(self):
+        self.assertEqual(run_linter("--rule", "9.99").returncode, ERROR)
+
+
 class Inflection(unittest.TestCase):
     def test_verb_forms(self):
         self.assertEqual(
@@ -177,7 +371,7 @@ class Dictionary(unittest.TestCase):
         cls.dictionary = json.loads(DICTIONARY.read_text())
         cls.approved = cls.dictionary["approved"]
         cls.alternatives = cls.dictionary["alternatives"]
-        cls.house = json.loads((SKILL / "assets" / "house-style.json").read_text())
+
 
     def test_meta_comes_first_for_diagnosis(self):
         self.assertEqual(list(self.dictionary)[0], "meta")
@@ -204,9 +398,7 @@ class Dictionary(unittest.TestCase):
     def test_every_slop_core_word_is_in_the_standard(self):
         # Catches the list rotting: an entry the standard does not list as
         # non-approved does nothing at all.
-        unmatched = data_module.unmatched_slop_core(
-            self.alternatives["lemmas"], self.house
-        )
+        unmatched = data_module.unmatched_slop_core(self.alternatives["lemmas"])
         self.assertEqual(unmatched, set())
 
     def test_irregular_auxiliary_survives_its_three_line_entry(self):
@@ -231,7 +423,7 @@ class Dictionary(unittest.TestCase):
 
 
 @needs_data
-class Modes(unittest.TestCase):
+class Detection(unittest.TestCase):
     SLOP = (
         "We utilized a comprehensive methodology to facilitate the rollout; "
         "it was designed to ensure success.\n"
@@ -251,40 +443,22 @@ class Modes(unittest.TestCase):
         path.write_text(json.dumps(values))
         return str(path)
 
-    def test_general_fails_on_slop(self):
-        result = run_linter("--mode", "ste-general", "-", stdin=self.SLOP)
+    def test_slop_fails_the_run(self):
+        result = run_linter("-", stdin=self.SLOP)
         self.assertEqual(result.returncode, ENFORCED)
         for word in ("utilize", "facilitate", "ensure", "methodology"):
             self.assertIn(word, result.stdout, word)
 
-    def test_general_leaves_ordinary_words_alone(self):
+    def test_ordinary_words_are_left_alone(self):
         # The whole non-approved list holds "way", "every", and "under". Using it
-        # whole would make ste-general unusable, so it must not fire on these.
+        # whole would make the linter unusable, so it must not fire on these.
         text = "The agent drops the rule under load, so every way through fails.\n"
-        result = run_linter("--mode", "ste-general", "-", stdin=text)
+        result = run_linter("-", stdin=text)
         for word in ("way", "every", "under", "load"):
             self.assertNotIn(f"“{word}”", result.stdout, word)
 
-    def test_strict_passes_when_the_glossary_declares_the_nouns(self):
-        config = self.config(
-            mode="ste-strict",
-            glossary=["pump", "valve", "pressure", "seal", "kPa"],
-        )
-        target = self.dir / "good.md"
-        target.write_text(self.STE)
-        result = run_linter("--mode", "ste-strict", "--config", config, str(target))
-        self.assertEqual(result.returncode, CLEAN, result.stdout)
-
-    def test_strict_fails_on_the_same_text_without_the_glossary(self):
-        config = self.config(mode="ste-strict", glossary=[])
-        target = self.dir / "good.md"
-        target.write_text(self.STE)
-        result = run_linter("--mode", "ste-strict", "--config", config, str(target))
-        self.assertEqual(result.returncode, ENFORCED)
-        self.assertIn("rule 1.1", result.stdout)
-
     def test_glossary_does_not_silence_the_marketing_check(self):
-        config = self.config(mode="ste-general", glossary=["robust"])
+        config = self.config(glossary=["robust"])
         target = self.dir / "x.md"
         target.write_text("The parser is robust.\n")
         result = run_linter("--config", config, str(target))
@@ -297,12 +471,10 @@ class Modes(unittest.TestCase):
         args = ["--config", path] if path else []
         return run_linter(*args, str(target)).stdout
 
-    def test_british_spelling_is_caught(self):
-        output = self.lint_text("Set the colour of the label.\n")
-        self.assertIn("rule 1.14", output)
-        self.assertIn("color", output)
-
-    def test_american_spelling_is_clean(self):
+    def test_no_spelling_check_without_a_locale(self):
+        # The skill ships no spelling list. Rule 1.14 is off until a locale
+        # exists, so a project that writes any variety of English is left alone.
+        self.assertNotIn("rule 1.14", self.lint_text("Set the colour of the label.\n"))
         self.assertNotIn("rule 1.14", self.lint_text("Set the color of the label.\n"))
 
     def test_phrasal_verb_is_caught(self):
@@ -314,7 +486,6 @@ class Modes(unittest.TestCase):
     def test_inconsistent_term_is_flagged(self):
         output = self.lint_text(
             "Clone the repo now.\n",
-            mode="ste-general",
             one_name_for_one_thing={"repository": ["repo"]},
         )
         self.assertIn("rule 1.11", output)
@@ -323,64 +494,10 @@ class Modes(unittest.TestCase):
     def test_noun_cluster_is_flagged(self):
         output = self.lint_text(
             "Replace the engine oil pressure sensor cable now.\n",
-            mode="ste-general",
             glossary=["engine", "oil", "pressure", "sensor", "cable"],
         )
         self.assertIn("rule 2.1", output)
 
-
-@needs_data
-class ModeResolution(unittest.TestCase):
-    """The mode belongs to the text. A runbook is strict in a general repo."""
-
-    STRICT_ONLY = "Install the widget.\n"  # "widget" is in no dictionary
-
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.dir = Path(self.tmp.name)
-        self.addCleanup(self.tmp.cleanup)
-        (self.dir / ".ste-writing.json").write_text(
-            json.dumps({"mode": "ste-general", "strict_paths": ["runbooks/**"]})
-        )
-        (self.dir / "runbooks").mkdir()
-        (self.dir / "README.md").write_text(self.STRICT_ONLY)
-        (self.dir / "runbooks" / "restart.md").write_text(self.STRICT_ONLY)
-
-    def lint(self, *names: str) -> subprocess.CompletedProcess:
-        return subprocess.run(
-            [sys.executable, str(LINTER), "--format", "json", *names],
-            cwd=self.dir, capture_output=True, text=True,
-        )
-
-    def test_default_mode_applies_outside_the_strict_paths(self):
-        report = json.loads(self.lint("README.md").stdout)
-        self.assertEqual(report["modes"]["README.md"], "ste-general")
-
-    def test_strict_paths_win_over_the_default_mode(self):
-        name = "runbooks/restart.md"
-        report = json.loads(self.lint(name).stdout)
-        self.assertEqual(report["modes"][name], "ste-strict")
-
-    def test_one_run_can_mix_both_modes(self):
-        result = self.lint("README.md", "runbooks/restart.md")
-        report = json.loads(result.stdout)
-        self.assertEqual(
-            set(report["modes"].values()), {"ste-general", "ste-strict"}
-        )
-        # The same text passes as general prose and fails as a strict procedure.
-        self.assertEqual(report["files"]["README.md"], [])
-        self.assertTrue(report["files"]["runbooks/restart.md"])
-        self.assertEqual(result.returncode, ENFORCED)
-
-    def test_explicit_mode_overrides_the_paths(self):
-        report = json.loads(
-            subprocess.run(
-                [sys.executable, str(LINTER), "--mode", "ste-general",
-                 "--format", "json", "runbooks/restart.md"],
-                cwd=self.dir, capture_output=True, text=True,
-            ).stdout
-        )
-        self.assertEqual(report["modes"]["runbooks/restart.md"], "ste-general")
 
 
 @needs_data
@@ -407,7 +524,6 @@ class ExitCodes(unittest.TestCase):
     def test_json_output_parses(self):
         result = run_linter("--format", "json", "-", stdin="We utilized it.\n")
         report = json.loads(result.stdout)
-        self.assertEqual(report["mode"], "ste-general")
         self.assertGreater(report["enforced"], 0)
         finding = report["files"]["<stdin>"][0]
         for key in ("rule", "tier", "line", "column", "text", "suggestion"):
@@ -465,7 +581,7 @@ class Hook(unittest.TestCase):
 
     def mark(self, **values) -> None:
         (self.repo / ".ste-writing.json").write_text(
-            json.dumps({"mode": "ste-general", **values})
+            json.dumps({**values})
         )
 
     def call(self, stop_hook_active: bool = False) -> dict:

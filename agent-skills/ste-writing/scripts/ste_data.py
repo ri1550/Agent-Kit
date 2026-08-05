@@ -5,18 +5,21 @@ The split this module keeps:
 
     data/ste-dictionary.json   what ASD wrote. Built from your own copy of the
                                standard, never committed.
-    assets/house-style.json    what we wrote. The slop list, the marketing
+    scripts/ste_policy.py      what we decided. The slop words, the marketing
                                words, and the words STE never documents.
-    .ste-writing.json          what the project decided. Its technical nouns.
+    <repo>/.ste-writing.json   what the project decided. Its own words, and the
+                               marker that switches the skill on.
 
-Only the first is generated. The house lists stay out of the dictionary file and
-are merged here, at load time, so editing them takes effect at once instead of
-waiting for a rebuild that wants a 434-page PDF.
+Only the first is generated. Our own words stay out of the dictionary file and
+are merged here, at load time, so a change to the policy takes effect at once
+instead of waiting for a rebuild that wants a 434-page PDF.
 """
 
 from __future__ import annotations
 
 import re
+
+import ste_policy
 
 # The release of the build format, written into data/ste-dictionary.json as
 # "version". It follows the release tag pattern this repository uses, v[0-9]*.
@@ -131,28 +134,33 @@ def inflect(lemma: str, parts_of_speech: list[str]) -> set[str]:
     return {form for form in forms if form.isalpha() or " " in form}
 
 
-def house_extras(house: dict) -> dict[str, dict]:
+def house_extras() -> dict[str, dict]:
     """The unapproved words we add, which the standard never documents."""
     return {
-        word.lower(): {"pos": spec["pos"], "replacements": list(spec["replacements"])}
-        for word, spec in house["extra_unapproved"].items()
-        if not word.startswith("_")
+        word: {"pos": sorted(pos), "replacements": list(replacements)}
+        for word, (pos, replacements) in ste_policy.EXTRA_UNAPPROVED.items()
     }
 
 
-def select_slop(lemmas: dict, house: dict) -> set[str]:
-    """Choose the words ste-general treats as slop.
+def select_slop(lemmas: dict) -> set[str]:
+    """Choose the words the linter treats as slop.
 
-    See "_slop_comment" in house-style.json for why this is a subset rather than
-    the whole non-approved list. Two ways in: the curated core, and a length test
-    for a long word that the standard replaces with a shorter one.
+    The obvious source is the standard's own non-approved list, but that list is
+    the whole non-approved vocabulary of English, not a slop list: it holds
+    "way", "every", "under", and "load". Using it whole gave 44 errors on a
+    README that reads fine, and a check nobody can act on is a check nobody
+    reads.
+
+    So a word gets in two ways: it is in SLOP_CORE, or it is at least
+    SLOP_MIN_LENGTH characters and the standard replaces it with something
+    shorter. That second test is the shape of the problem, a long Latinate word
+    standing in for a short plain one.
     """
-    minimum = house["slop_min_length"]
-    chosen = {word.lower() for word in house["slop_core"] if word.lower() in lemmas}
-    chosen |= set(house_extras(house))
+    chosen = {word for word in ste_policy.SLOP_CORE if word in lemmas}
+    chosen |= set(ste_policy.EXTRA_UNAPPROVED)
 
     for lemma, entry in lemmas.items():
-        if len(lemma) < minimum or " " in lemma:
+        if len(lemma) < ste_policy.SLOP_MIN_LENGTH or " " in lemma:
             continue
         replacements = [
             re.sub(r"\s*\([^)]*\)", "", text).strip() for text in entry["replacements"]
@@ -163,20 +171,20 @@ def select_slop(lemmas: dict, house: dict) -> set[str]:
     return chosen
 
 
-def unmatched_slop_core(lemmas: dict, house: dict) -> set[str]:
-    """slop_core entries the standard does not list as non-approved.
+def unmatched_slop_core(lemmas: dict) -> set[str]:
+    """SLOP_CORE entries the standard does not list as non-approved.
 
     They are either approved after all, or absent from the dictionary entirely.
     Either way the entry does nothing, so the tests report it rather than let the
     list rot quietly.
     """
-    return {word.lower() for word in house["slop_core"]} - set(lemmas)
+    return set(ste_policy.SLOP_CORE) - set(lemmas)
 
 
 class Vocabulary:
     """Every word list the linter needs, built once at load time."""
 
-    def __init__(self, dictionary: dict, house: dict) -> None:
+    def __init__(self, dictionary: dict, locale: dict | None = None) -> None:
         self.meta: dict = dictionary.get("meta", {})
         # Check before touching the content. A dictionary built by different
         # code should say so, not fail later on a missing key.
@@ -192,7 +200,7 @@ class Vocabulary:
         self.alternative_lemmas: dict = dict(alternatives["lemmas"])
         self.alternative_forms: dict[str, str] = dict(alternatives["forms"])
 
-        for lemma, spec in house_extras(house).items():
+        for lemma, spec in house_extras().items():
             entry = self.alternative_lemmas.setdefault(
                 lemma, {"pos": [], "replacements": []}
             )
@@ -206,7 +214,7 @@ class Vocabulary:
                 if form not in self.approved_forms:
                     self.alternative_forms.setdefault(form, lemma)
 
-        slop_lemmas = select_slop(self.alternative_lemmas, house)
+        slop_lemmas = select_slop(self.alternative_lemmas)
         self.slop_forms: dict[str, str] = {
             form: lemma
             for form, lemma in self.alternative_forms.items()
@@ -219,8 +227,17 @@ class Vocabulary:
                 for lemma in self.alternative_lemmas
                 if " " in lemma and len(lemma.split()) == 2
             }
-            | set(house["phrasal_verbs"])
+            | set(ste_policy.PHRASAL_VERBS)
         )
+
+        # A locale turns rule 1.14 on. Without one there is no spelling check at
+        # all, because the skill ships no spelling list: the map is generated by
+        # an agent walking the dictionary, once, per language. See localize.py.
+        self.locale: str = ""
+        self.spellings: dict[str, str] = {}
+        if locale:
+            self.locale = locale.get("meta", {}).get("locale", "")
+            self.spellings = dict(locale.get("spellings", {}))
 
     def replacements(self, lemma: str) -> list[str]:
         return self.alternative_lemmas.get(lemma, {}).get("replacements", [])

@@ -1,6 +1,6 @@
 ---
 name: ste-writing
-description: Rewrite prose (docs, READMEs, PR descriptions, error messages, release notes, comments — never code) into ASD-STE100 Simplified Technical English to remove "AI slop". Use when asked to make writing not sound like AI, make docs clear or plain, enforce a controlled writing style, or write technical documentation that reads human. Two modes — ste-strict (procedures, safety) and ste-general (everything else) — both checked by a linter that decides pass or fail.
+description: Rewrite prose (docs, READMEs, PR descriptions, error messages, release notes, comments — never code) into ASD-STE100 Simplified Technical English to remove "AI slop". Use when asked to make writing not sound like AI, make docs clear or plain, enforce a controlled writing style, or write technical documentation that reads human. A linter decides whether the text passes, and a Stop hook holds the turn open until it does.
 ---
 
 # ste-writing
@@ -21,7 +21,7 @@ get tired.
 Run this first. If `scripts/ste-lint.py` exits 3, one of these steps is not
 complete.
 
-1. **Build the dictionary.** The repository ships no content from the standard,
+1. **Build the dictionary.** The skill ships no content from the standard,
    because ASD holds the copyright. Download ASD-STE100 Issue 9 from
    https://asd-ste100.org. It is free, but you must make an account. Then:
 
@@ -31,47 +31,33 @@ complete.
 
    `<skill>` is the directory that holds this file. Resolve it from the path of
    `SKILL.md`, because the working directory is the user's project, not the
-   skill. Every other path in this file is relative to `<skill>` for the same
-   reason.
+   skill. Every other path here is relative to `<skill>` for the same reason.
 
    This writes `<skill>/data/`, which is never committed. It needs `pdftotext`
    from poppler. Rebuild it after you clone.
 
-2. **Switch this repository on.** Copy `assets/marker-template.json` to the
-   repository root as `.ste-writing.json`, set `mode`, and add this project's
-   technical nouns to `glossary`. Commit it. That file is the opt-in switch and
-   the project's settings in one. Without it the Stop hook does nothing.
+2. **Switch the repository on.** From the root of the project:
+
+   ```bash
+   python3 <skill>/scripts/ste-lint.py --init
+   ```
+
+   That writes `.ste-writing.json`, which is the marker the hook looks for and
+   the place this project's own words live. Commit it. Delete it to opt out.
 
 3. **Install the gate, once.** Merge `hooks/settings-snippet.json` into
    `~/.claude/settings.json`. The hook is inert in every repository that has no
    marker file, so installing it globally switches nothing on by itself.
 
-## Pick the mode
-
-| Mode | Use it for | What fails the run |
-|---|---|---|
-| `ste-strict` | Procedures, runbooks, safety text, error messages | The structure rules, plus the approved-word allowlist. Every word must be in the STE dictionary or in this project's glossary. |
-| `ste-general` | READMEs, pull request text, docs, release notes, comments | The structure rules, plus the slop list. It leaves ordinary English words alone. |
-
-When the text mixes both, split it. Write the procedure in `ste-strict` and the
-prose around it in `ste-general`.
-
-You do not pass `--mode` for a file inside a marked repository. The linter reads
-`mode` and `strict_paths` from `.ste-writing.json` and decides for each file, so
-a runbook stays strict in a repository whose default is general. If a file needs
-`ste-strict` and no pattern covers it, add the pattern to `strict_paths` rather
-than checking that one file by hand.
-
 ## The loop
 
-Follow this in order. Step 4 is not optional and its result is not negotiable.
+Follow this in order. Step 3 is not optional and its result is not negotiable.
 
 1. **Check that the text is in scope.** Code, identifiers, command syntax,
    marketing copy, and anything that needs a voice are out. Say so and stop.
-2. **Pick the mode** from the table above, or take it from `.ste-writing.json`.
-3. **Write the text.** Write only the text the user asked for. Add no preamble,
+2. **Write the text.** Write only the text the user asked for. Add no preamble,
    no summary, and no closing remarks.
-4. **Run the linter.**
+3. **Run the linter.**
 
    ```bash
    python3 <skill>/scripts/ste-lint.py --format json <file>
@@ -82,34 +68,69 @@ Follow this in order. Step 4 is not optional and its result is not negotiable.
 
    Exit 3 is never a pass. It means the gate is off, so fix the setup first.
 
-5. **Fix each finding.** Every finding carries a rule id. Look the id up in
-   `data/rule-index.md`, then open **only** the section file it points to. Do not
-   read the other rule files. Findings also carry the replacement the standard
-   itself suggests, so use it.
-6. **Run the linter again.** Repeat until it exits 0.
-7. **Walk the checklist.** Run `python3 scripts/remind.py` and confirm each item
-   it prints. No script can check those rules.
+4. **Fix each finding.** Every finding carries the rule id, the offending text,
+   the rule in one line (`short`), and usually the replacement the standard
+   itself suggests. Fix it from those when they are enough.
+
+   When they are not enough, read the rule:
+
+   ```bash
+   python3 <skill>/scripts/ste-lint.py --rule 3.6
+   ```
+
+   The ids `H.1`, `H.2`, and `H.3` are house rules. ASD did not write them, so
+   there is no rule text to read and the suggestion is the whole answer.
+
+5. **Run the linter again.** Repeat until it exits 0.
+6. **Walk the checklist.** Run `python3 <skill>/scripts/remind.py` and confirm
+   each item it prints. No script can check those rules.
 
 If a finding is wrong, say which one and why. Do not ignore it quietly, and do
-not edit the rule tiers to remove it.
+not edit `scripts/ste_policy.py` to remove it.
+
+## A word this project uses
+
+A word the STE dictionary does not hold is not always a mistake. Every project
+has its own nouns. Add one when you are sure it is a real term here:
+
+```bash
+python3 <skill>/scripts/ste-lint.py --add-word endpoint webhook
+```
+
+That writes to `.ste-writing.json`. Use it for the words the project decided on,
+not for the words you did not want to fix.
 
 ## What the linter cannot check
 
-Of the 53 writing rules, the linter enforces 14 and flags 22 more that it can see
-but cannot judge. Four more tell it how to count words, so it applies those to
-the word count and never reports them as a fault. The last 13 need a person:
-whether a technical noun was the right choice, whether the information arrives in
-a useful order, whether a paragraph holds one topic.
+Of the 53 writing rules, the linter enforces 12 and flags 4 more that it can see
+but cannot judge. Four tell it how to count words. The rest need a person:
+whether a technical noun was the right choice, whether the information arrives
+in a useful order, whether a paragraph holds one topic.
 
-`scripts/remind.py` prints those 13, and `assets/rule-tiers.json` says which rule
-sits in which tier. The hook runs the reminder when the lint passes.
+`scripts/remind.py` prints those, and `scripts/ste_policy.py` says which rule
+sits in which tier.
 
 This skill fixes the form of the writing. It cannot make a hollow paragraph true.
 
+## Writing in another variety of English
+
+Rule 1.14 asks for American spelling, which is right for the standard and wrong
+for a team that does not write it. The skill ships no spelling list. Instead it
+builds one, once, per language:
+
+```bash
+python3 <skill>/scripts/localize.py --en-GB           # the work plan
+python3 <skill>/scripts/localize.py --en-GB --check   # check what you wrote
+```
+
+The plan gives you the words from the dictionary that could differ, and names
+the traps. You decide each one and write `data/locale-en-GB.json`. Then set
+`"locale": "en-GB"` in `.ste-writing.json`. Until you do, there is no spelling
+check at all.
+
 ## Write it right the first time
 
-The linter is the gate, not the method. Applying these while drafting keeps most
-findings from happening.
+The linter is the gate, not the method. These keep most findings from happening.
 
 - One name for one thing. Do not call the same item by two names.
 - Use the short common word: `start` not `begin`, `use` not `utilize`, `help` not
@@ -119,7 +140,7 @@ findings from happening.
 - Active voice. `The parser reads the file`, not `the file is read by the parser`.
 - Use a verb for an action. `analyze the log`, not `perform an analysis of the log`.
 - One instruction per sentence. 20 words for an instruction, 25 for description.
-- No contractions. No semicolons. American spelling.
+- No contractions. No semicolons.
 - One topic per paragraph, six sentences at most.
 - For steps, use a numbered list, one action per item, in the command form.
 - Put a condition before its command.
@@ -130,19 +151,17 @@ findings from happening.
 | Path | What it is |
 |---|---|
 | `scripts/ste-lint.py` | The gate. Rule ids, `file:line:column`, exit codes |
+| `scripts/ste_policy.py` | Which rules the linter enforces, and our own word lists |
+| `scripts/ste_data.py` | The word lists that the scripts share |
 | `scripts/build-dictionary.py` | Turns your copy of the PDF into `data/` |
-| `scripts/ste_data.py` | The word lists that both scripts share |
+| `scripts/localize.py` | Plans and checks a locale |
 | `scripts/remind.py` | Prints the checklist above. Never blocks |
 | `hooks/ste-hook.py` | Stop hook. Inert unless the repository has a marker file |
-| `assets/rule-tiers.json` | The tier of each rule: enforced, flagged, or judgment |
-| `assets/house-style.json` | Our slop list, for the words STE never documents |
 | `data/ste-dictionary.json` | The words of the standard. The build step writes it |
-| `data/rule-index.md` | Rule id to section file. The build step writes it |
 
-Three sources, and they do not mix. `data/` holds what ASD wrote, and only the
-build step writes there. `assets/` holds what we wrote, and an edit takes effect
-on the next run with no rebuild. `.ste-writing.json` holds what the project
-decided.
+Two dictionaries, and they do not mix. `data/ste-dictionary.json` holds what ASD
+wrote, and only the build step writes there. `.ste-writing.json` holds what the
+project decided. Everything else is code.
 
 ASD holds the copyright to the standard. Do not paste it into a file, an issue,
 or a commit.

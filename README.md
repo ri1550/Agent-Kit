@@ -76,31 +76,31 @@ This needs `pdftotext`, which comes with poppler. It writes
 clone.
 
 That directory holds `ste-dictionary.json` and the rule files, and nothing else.
-It is the words of the standard and only that: our own word lists stay in
-`assets/`, where an edit takes effect on the next run rather than after a
-rebuild. The dictionary starts with a `meta` block that names the PDF it came
-from, the counts it extracted, and the `version` of the build format. Run `head`
-on the file to see what you have.
+It is the words of the standard and only that. Our own judgements live in
+`scripts/ste_policy.py`, and the project's words live in `.ste-writing.json`.
+Two dictionaries, and they do not mix.
+
+The dictionary starts with a `meta` block that names the PDF it came from, the
+counts it extracted, and the `version` of the build format. Run `head` on the
+file to see what you have.
 
 The linter reads that version before it reads a word. A dictionary built by an
-older format exits 3 and tells you to build it again. That is better than a
-crash part way through a file. Bump `DICTIONARY_VERSION` in
-`agent-skills/ste-writing/scripts/ste_data.py` when the built shape changes.
+older format exits 3 and tells you to build it again. That beats a crash part
+way through a file.
 
 The script checks its own work and writes nothing if the extraction falls short.
 A dictionary that is quietly half complete is worse than no dictionary, because
-strict mode would then pass text it never checked.
+the linter would then pass text it never checked.
 
-**2. Mark the repositories you want.** Copy
-`agent-skills/ste-writing/assets/marker-template.json` to the root of a
-repository as `.ste-writing.json`, then add that project's technical nouns to
-`glossary`. Commit it. The file is the opt-in switch and the project settings in
-one. Delete it to opt out.
+**2. Mark the repositories you want.** From the root of the project:
 
-Set `mode` to the default for the repository, and list the paths that must be
-stricter in `strict_paths`. The mode belongs to the text, not to the repository.
-A runbook is still a runbook in a repository that is mostly prose, so the linter
-reads the mode for each file.
+```bash
+python3 agent-skills/ste-writing/scripts/ste-lint.py --init
+```
+
+That writes `.ste-writing.json`, which is the marker the hook looks for and the
+place the project's own words live. Commit it. Delete it to opt out. Add words
+to it with `--add-word`, or by hand.
 
 **3. Install the hook, once.** Merge
 `agent-skills/ste-writing/hooks/settings-snippet.json` into
@@ -111,15 +111,16 @@ itself.
 ### The checks
 | Check | What it does | Blocks? |
 |---|---|---|
-| `ste-lint.py` | Reads prose and reports each finding with its rule id and its `file:line:column`. Two modes: `ste-strict` runs the approved-word allowlist, `ste-general` runs the slop list | Yes, on an enforced rule |
+| `ste-lint.py` | Reads prose and reports each finding with its rule id, its `file:line:column`, and the rule in one line. `--rule <id>` prints the full rule | Yes, on an enforced rule |
 | `ste-hook.py` | Stop hook. Lints the prose files that differ from `HEAD` and holds the turn open until they pass | Yes, once. It releases on the second pass so it cannot loop |
 | `build-dictionary.py` | Turns your copy of the PDF into the word lists and the rule files | Yes, if the extraction falls short |
+| `localize.py` | Plans a locale for the dictionary, then checks what the agent wrote | Yes, on a bad locale file |
 | `remind.py` | Prints the rules no script can check, after the lint passes | Never |
-| `tests/test_ste.py` | 63 tests over the word counting, the segmentation, both modes, every exit code, and the hook | Yes, on a failure |
+| `tests/test_ste.py` | Tests over the word counting, the segmentation, every exit code, the locale contract, and the hook | Yes, on a failure |
 
 Run the linter by hand at any time:
 ```bash
-python3 agent-skills/ste-writing/scripts/ste-lint.py --mode ste-general README.md
+python3 agent-skills/ste-writing/scripts/ste-lint.py README.md
 echo $?   # 0 clean · 1 enforced · 2 flagged · 3 could not run
 ```
 
@@ -132,12 +133,39 @@ python3 agent-skills/ste-writing/tests/test_ste.py
 Exit 3 never becomes exit 0. A linter that passes because it has no dictionary is
 worse than no linter, because the gate still looks green.
 
+### Writing in another variety of English
+Rule 1.14 asks for American spelling, which is right for the standard and wrong
+for a team that does not write it. The skill ships no spelling list. It builds
+one instead, once, per language:
+
+```bash
+python3 agent-skills/ste-writing/scripts/localize.py --en-GB
+python3 agent-skills/ste-writing/scripts/localize.py --en-GB --check
+```
+
+The plan gives an agent the words that could differ and names the traps, such as
+"programme" for a schedule but "program" for software. The agent decides each
+one and writes `data/locale-en-GB.json`. Set `"locale": "en-GB"` in
+`.ste-writing.json` to switch it on. Until you do, there is no spelling check.
+
+### One mode, on purpose
+ASD wrote the standard for aircraft maintenance procedures. Its dictionary
+approves about 800 words, which is enough for a procedure and nowhere near
+enough for prose.
+
+Run it as an allowlist over this repository's own README and it reports 279
+findings in 1137 words. The unknown words are "so", "way", "every", and "still".
+No glossary fixes that, because those are not technical nouns.
+
+So the skill does not run an allowlist. It uses the standard's vocabulary
+judgements to find slop, which is the job on the label. There is one mode and no
+flag to choose it.
+
 ### What it does not do
-ASD-STE100 has 53 writing rules. The linter enforces 14 and flags 22 more that it
-can see but cannot judge. Four more tell it how to count words, so it applies
-those to the word count and never reports them as a fault. The last 13 need a
+ASD-STE100 has 53 writing rules. The linter enforces 12 and flags 4 more that it
+can see but cannot judge. Four tell it how to count words. The rest need a
 person, and `remind.py` prints them when the lint passes.
-`assets/rule-tiers.json` says which rule sits where.
+`scripts/ste_policy.py` says which rule sits where.
 
 This is not a certified STE checker. It fixes the form of the writing. It cannot
 make a hollow paragraph true.
