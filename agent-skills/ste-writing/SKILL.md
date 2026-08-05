@@ -112,7 +112,7 @@ a marker file that says so.
 
 ## What the linter cannot check
 
-Of the 53 writing rules, the linter enforces 12 and flags 4 more that it can see
+Of the 53 writing rules, the linter enforces 13 and flags 4 more that it can see
 but cannot judge. Four tell it how to count words. The rest need a person:
 whether a technical noun was the right choice, whether the information arrives
 in a useful order, whether a paragraph holds one topic.

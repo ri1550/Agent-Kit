@@ -220,6 +220,38 @@ class Policy(unittest.TestCase):
             if entry.check:
                 self.assertNotEqual(entry.tier, "judgment", rule)
 
+    def test_the_documented_counts_match_the_table(self):
+        """The tier counts appear in prose, and prose drifts.
+
+        This has already gone stale twice: once when the tiers were rewritten,
+        and once when H.4 was added and "enforces 12" stayed behind.
+        """
+        import collections
+        counts = collections.Counter(
+            entry.tier for entry in policy.RULES.values() if entry.check
+        )
+        # Check every stated count, not just one. Accepting "at least one right
+        # mention" lets a stale number sit next to a fresh one: a first version
+        # of this test passed while the table said 12 and the prose said 13.
+        for doc in (SKILL / "SKILL.md", SKILL / "README.md"):
+            text = doc.read_text(encoding="utf-8")
+            for tier in ("enforced", "flagged"):
+                verb = "enforces" if tier == "enforced" else "flags"
+                stated = [
+                    int(n) for n in re.findall(
+                        rf"{verb} (\d+)\b"           # "enforces 13"
+                        rf"|\| {tier} \| (\d+) \|"   # "| enforced | 13 |"
+                        rf"|The (\d+) {tier}\b",     # "The 13 enforced:"
+                        text,
+                    ) for n in n if n
+                ]
+                self.assertTrue(stated, f"{doc.name} states no {tier} count")
+                self.assertEqual(
+                    set(stated), {counts[tier]},
+                    f"{doc.name} states {sorted(set(stated))} for {tier}, "
+                    f"and the table says {counts[tier]}",
+                )
+
     def test_house_rules_are_declared(self):
         for rule in policy.HOUSE_RULES:
             self.assertIn(rule, policy.RULES)
