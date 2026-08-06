@@ -865,13 +865,6 @@ def main() -> int:
         index,
     )
 
-    # Older builds left these here. Remove them so a stale copy cannot be read
-    # by mistake, and so no second copy of the standard's text sits on disk.
-    for stale in ("approved.json", "alternatives.json", "slop.json",
-                  "phrasal.json", "meta.json", "rule-index.md"):
-        (out / stale).unlink(missing_ok=True)
-    shutil.rmtree(out / "rules", ignore_errors=True)
-
     print(f"\nwrote {out / 'ste-dictionary.json'} and {out / 'ste-rules.json'}")
     print("This directory is not committed. Rebuild it after you clone.")
     return 0
