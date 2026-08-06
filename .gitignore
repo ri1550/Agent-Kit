@@ -4,8 +4,12 @@ development/
 # Generated from the user's own copy of ASD-STE100.
 agent-skills/ste-writing/data/
 
-# Agent tooling
-.claude/settings.local.json
+# The suite runs against a clone and is not shipped with the skill.
+agent-skills/ste-writing/tests/
+*.pdf
+
+# Agent tooling.
+.claude/
 
 # Python
 *.py[cod]
