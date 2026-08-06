@@ -25,8 +25,8 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-LINTER = HERE.parent / "scripts" / "ste-lint.py"
-REMINDER = HERE.parent / "scripts" / "remind.py"
+LINTER = HERE / "ste-lint.py"
+REMINDER = HERE / "remind.py"
 MARKER = ".ste-writing.json"
 PROSE_SUFFIXES = {".md", ".txt", ".markdown", ".mdx", ".rst"}
 

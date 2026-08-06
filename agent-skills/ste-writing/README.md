@@ -56,9 +56,27 @@ and the place your own words live. Commit it. Delete it to opt out.
 
 **3. Install the hook, once.**
 
-Merge `hooks/settings-snippet.json` into `~/.claude/settings.json` and correct
-the path. The hook does nothing in a repository that has no marker file, so a
-global install switches nothing on by itself.
+Add this to `~/.claude/settings.json`, and correct the path to your clone:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "python3 $HOME/Projects/Agent-Kit/agent-skills/ste-writing/scripts/ste-hook.py",
+        "timeout": 60,
+        "statusMessage": "Checking prose against STE..."
+      }
+    ]
+  }
+}
+```
+
+Write `$HOME` and not `~`, because `~` expands only in a shell. An absolute path
+works too. A Stop hook takes no matcher: it fires on every turn that ends. The
+hook does nothing in a repository that has no marker file, so a global install
+switches nothing on by itself.
 
 ## How the parts fit
 
@@ -101,7 +119,7 @@ fails the build, and does not switch a rule off in silence.
 | `localize.py` | Plans a locale, then checks what the agent wrote |
 | `ste_data.py` | The shapes of the built data, and the word lists |
 | `ste_policy.py` | The rule table, and the words STE never documents |
-| `hooks/ste-hook.py` | Stop hook. Inert without a marker file |
+| `ste-hook.py` | Stop hook. Inert without a marker file |
 | `remind.py` | Prints the rules no script can check |
 | `tests/test_ste.py` | The test suite |
 

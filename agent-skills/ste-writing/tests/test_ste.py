@@ -22,7 +22,6 @@ from pathlib import Path
 
 SKILL = Path(__file__).resolve().parent.parent
 SCRIPTS = SKILL / "scripts"
-HOOKS = SKILL / "hooks"
 DATA = SKILL / "data"
 LINTER = SCRIPTS / "ste-lint.py"
 
@@ -892,7 +891,7 @@ class Hook(unittest.TestCase):
             "stop_hook_active": stop_hook_active,
         }
         result = subprocess.run(
-            [sys.executable, str(HOOKS / "ste-hook.py")],
+            [sys.executable, str(SCRIPTS / "ste-hook.py")],
             input=json.dumps(payload),
             capture_output=True,
             text=True,

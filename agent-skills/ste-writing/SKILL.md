@@ -45,9 +45,28 @@ complete.
    That writes `.ste-writing.json`, which is the marker the hook looks for and
    the place this project's own words live. Commit it. Delete it to opt out.
 
-3. **Install the gate, once.** Merge `hooks/settings-snippet.json` into
-   `~/.claude/settings.json`. The hook is inert in every repository that has no
-   marker file, so installing it globally switches nothing on by itself.
+3. **Install the gate, once.** Add this to `~/.claude/settings.json`, and
+   correct the path to your clone:
+
+   ```json
+   {
+     "hooks": {
+       "Stop": [
+         {
+           "type": "command",
+           "command": "python3 $HOME/Projects/Agent-Kit/agent-skills/ste-writing/scripts/ste-hook.py",
+           "timeout": 60,
+           "statusMessage": "Checking prose against STE..."
+         }
+       ]
+     }
+   }
+   ```
+
+   Write `$HOME` and not `~`, because `~` expands only in a shell. An absolute
+   path works too. A Stop hook takes no matcher: it fires on every turn that
+   ends. The hook is inert in every repository that has no marker file, so a
+   global install switches nothing on by itself.
 
 ## The loop
 
@@ -180,7 +199,7 @@ The linter is the gate, not the method. These keep most findings from happening.
 | `scripts/build-dictionary.py` | Turns your copy of the PDF into `data/` |
 | `scripts/localize.py` | Plans and checks a locale |
 | `scripts/remind.py` | Prints the checklist above. Never blocks |
-| `hooks/ste-hook.py` | Stop hook. Inert unless the repository has a marker file |
+| `scripts/ste-hook.py` | Stop hook. Inert unless the repository has a marker file |
 | `data/ste-dictionary.json` | The words of the standard. The build step writes it |
 | `data/ste-rules.json` | The rules of the standard, one record each, with examples |
 | `.ste-writing.json` | The marker, and this project's own words |
