@@ -1,7 +1,7 @@
 {
   "meta": {
     "written_by": "ste-lint.py --init",
-    "version": "v1.0.0",
+    "version": "v1.1.0",
     "note": [
       "This repository writes its own prose in STE. Delete this file to opt out.",
       "The words below are decisions, not words we could not be bothered to fix."
@@ -23,14 +23,26 @@
 
   "words": {
     "allow": [
-      "agent", "API", "argument", "artifact", "ASD", "ASD-STE100", "branch",
-      "cache", "checker", "CLI", "code", "commit", "config", "dependency",
-      "dictionary", "directory", "documentation", "extractor", "file", "flag",
-      "glossary", "hook", "identifier", "JSON", "linter", "locale", "log",
-      "markdown", "marker", "MCP", "merge", "paragraph", "parser", "path",
-      "pdftotext", "poppler", "prose", "Python", "README", "repository",
-      "request", "runbook", "schema", "script", "server", "session", "skill",
-      "STE", "symlink", "syntax", "token", "workflow"
+      "agent", "API", "argument", "artifact", "ASD", "ASD-STE100",
+      { "word": "branch", "pos": ["n", "v"] },
+      { "word": "cache", "pos": ["n", "v"] },
+      "checker", "CLI",
+      { "word": "code", "pos": ["n", "v"] },
+      { "word": "commit", "pos": ["n", "v"] },
+      "config", "dependency", "dictionary", "directory", "documentation",
+      "extractor", "file",
+      { "word": "flag", "pos": ["n", "v"] },
+      "glossary",
+      { "word": "hook", "pos": ["n", "v"] },
+      "identifier", "JSON", "linter", "locale",
+      { "word": "log", "pos": ["n", "v"] },
+      "markdown", "marker", "MCP",
+      { "word": "merge", "pos": ["n", "v"] },
+      "paragraph", "parser", "path", "pdftotext", "poppler", "prose", "Python",
+      "README", "repository",
+      { "word": "request", "pos": ["n", "v"] },
+      "runbook", "schema", "script", "server", "session", "skill", "STE",
+      "symlink", "syntax", "token", "workflow"
     ],
 
     "deny": {},

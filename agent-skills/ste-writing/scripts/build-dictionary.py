@@ -37,8 +37,9 @@ HERE = Path(__file__).resolve().parent
 SKILL_DIR = HERE.parent
 DEFAULT_OUT = SKILL_DIR / "data"
 
-# Parts of speech the dictionary uses. TN is a technical noun.
-POS = "n|v|adj|adv|prep|pron|conj|art|int|abbr|num|det|TN"
+# Parts of speech the dictionary uses. TN is a technical noun. Held in ste_data
+# so the linter validates a project's own tags against the same list.
+POS = "|".join(ste_data.PARTS_OF_SPEECH)
 
 HEADWORD = re.compile(rf"^(?P<word>[A-Za-z][A-Za-z0-9 \-/'’.]*?)\s+\((?P<pos>{POS})\)")
 PAGE_WORDLIST = re.compile(r"Page 2-1-[A-Z]+\d+")

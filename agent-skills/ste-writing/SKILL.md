@@ -130,7 +130,7 @@ in every file.
 | Section | Effect | Command |
 |---|---|---|
 | `deny` | Refuses a word here, even one the standard approves | `--deny utilise use` |
-| `allow` | Lets you use a word the dictionary does not hold, and teaches rule 2.1 that it is a noun | `--add-word endpoint webhook` |
+| `allow` | Lets you use a word the dictionary does not hold, and gives the linter its part of speech | `--add-word endpoint webhook` |
 | `prefer` | One name for one thing, per rule 1.11 | `--prefer repository repo` |
 
 To see every word this project trips on, grouped so you decide each one once:
@@ -143,9 +143,23 @@ Use `allow` for the words the project decided on, not for the words you did not
 want to fix. A word cannot be in both `allow` and `deny`, and the linter refuses
 a marker file that says so.
 
+An `allow` entry is a word, or an object that gives its part of speech:
+
+```json
+"allow": ["artifact", { "word": "cache", "pos": ["n", "v"] }]
+```
+
+A plain word is a noun, which is what rule 2.1 counts. Tag a word that is also a
+verb, or rule 2.1 reads `Cache the config file` as a noun cluster.
+
+Tagging also switches on two rules that a bare list never raises. A word you tag
+a noun and not a verb is rule 1.7 when it appears as a verb, and a word you tag a
+verb and not a noun is rule 1.13 when it appears as a noun. `--add-word cache:n,v`
+writes the object form.
+
 ## What the linter cannot check
 
-Of the 53 writing rules, the linter enforces 13 and flags 4 more that it can see
+Of the 53 writing rules, the linter enforces 13 and flags 7 more that it can see
 but cannot judge. Four tell it how to count words. The rest need a person:
 whether a technical noun was the right choice, whether the information arrives
 in a useful order, whether a paragraph holds one topic.

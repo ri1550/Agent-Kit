@@ -16,8 +16,8 @@ meaning to each word.
 
 Most of what people call AI slop is a form problem: stacked auxiliaries, a
 passive with no actor, a marketing adjective, a long Latinate word where a short
-plain one would do. The standard already names each of those, and it named them
-40 years before the machines did.
+plain one would do. The standard already names each of those, and it did so
+40 years before the machines came.
 
 An instruction to follow the standard does not hold. The agent drops it under
 load. So the rules live in a script that runs, reports a line and a column, and
@@ -107,9 +107,6 @@ linter, and a slop word only means something to the check that reads it. So a
 rule record carries no tier. `--rule` joins the two when it prints the rule, and
 the tier can change without a rebuild.
 
-Two tests hold the table and the linter to each other. A typo in a check name
-fails the build, and does not switch a rule off in silence.
-
 ## The scripts
 
 | Script | What it does |
@@ -121,7 +118,6 @@ fails the build, and does not switch a rule off in silence.
 | `ste_policy.py` | The rule table, and the words STE never documents |
 | `ste-hook.py` | Stop hook. Inert without a marker file |
 | `remind.py` | Prints the rules no script can check |
-| `tests/test_ste.py` | The test suite |
 
 ### build-dictionary.py
 
@@ -139,7 +135,7 @@ join into one word.
 The script checks its own work and writes nothing if the extraction falls short:
 minimum counts, and one spot check per parsing hazard that has bitten before. A
 dictionary that is quietly half complete is worse than no dictionary. The linter
-would then pass text nobody checked.
+would then pass text that nobody examined.
 
 Issue 9 yields 799 approved lemmas and 1222 non-approved lemmas, each with the
 replacement the standard suggests. It also yields all 53 rules, the 8 general
@@ -165,7 +161,12 @@ python3 scripts/ste-lint.py --rule 3.6 --full        # the text of the rule
 python3 scripts/ste-lint.py --subject hyphen         # which rule covers this?
 python3 scripts/ste-lint.py --rules                  # every rule and its tier
 python3 scripts/ste-lint.py --triage docs/*.md       # every word to decide
+python3 scripts/ste-lint.py --fail-on-flagged x.md   # exit 1 on flagged too
 ```
+
+`--fail-on-flagged` turns the warnings into a gate. The hook never passes it: the
+flagged tier is advice, and a rule that only warns is one the agent answers
+rather than obeys.
 
 `--rule` gives the statement and the worked examples, which is what an agent
 fixes a finding from. The text of the rule is 60 lines of prose, so it comes
@@ -249,7 +250,7 @@ it, then named sections.
 
 ```json
 {
-  "meta":     { "written_by": "ste-lint.py --init", "version": "v1.0.0" },
+  "meta":     { "written_by": "ste-lint.py --init", "version": "v1.1.0" },
   "settings": { "locale": "", "exclude": ["LICENSE"] },
   "words":    { "allow": [], "deny": {}, "prefer": {} }
 }
@@ -260,7 +261,7 @@ The linter reads the three word sections in this order:
 | Section | Effect | Command |
 |---|---|---|
 | `deny` | Refuses a word here, even one the standard approves | `--deny utilise use` |
-| `allow` | Lets you use a word the dictionary lacks, and teaches rule 2.1 that it is a noun | `--add-word endpoint` |
+| `allow` | Lets you use a word the dictionary lacks, and gives the linter its part of speech | `--add-word endpoint` |
 | `prefer` | One name for one thing, per rule 1.11 | `--prefer repository repo` |
 
 The linter reads `deny` first, so a project decision beats every other check. A
@@ -268,6 +269,24 @@ word in both `allow` and `deny` is a contradiction, and the linter refuses the
 file rather than pick one.
 
 Base forms only. The plural and the possessive of a declared word match for you.
+
+An `allow` entry is a word, or an object that gives its part of speech:
+
+```json
+"allow": ["artifact", { "word": "cache", "pos": ["n", "v"] }]
+```
+
+A plain word is a noun, which is what rule 2.1 counts. Tag a word that is also a
+verb, or rule 2.1 reads `Cache the config file` as a noun cluster.
+
+Tagging also switches on two rules that a bare list never raises. A word you tag
+a noun and not a verb is rule 1.7 when it appears as a verb, and a word you tag a
+verb and not a noun is rule 1.13 when it appears as a noun. `--add-word cache:n,v`
+writes the object form.
+
+A word that is honestly both, as `cache` and `commit` are, gets both tags. Rule
+2.1 then leaves it alone where a sentence opens on it, because that position is
+the imperative.
 
 There is no stored list of flagged words. `--triage` computes it from the prose,
 so it cannot claim a word is a problem after you delete the sentence.
@@ -280,7 +299,7 @@ ASD-STE100 has 53 writing rules. This skill adds four house rules, which carry a
 | Tier | Count | Meaning |
 |---|---|---|
 | enforced | 13 | The linter decides. A violation returns exit 1 |
-| flagged | 4 | The linter warns. The agent resolves it or says why not |
+| flagged | 7 | The linter warns. The agent resolves it or says why not |
 | counting | 4 | Not a fault. Rules 8.4 thru 8.7 shape the word count |
 | judgment | 17 | No machine can decide it. `remind.py` prints these |
 
@@ -299,12 +318,19 @@ The 13 enforced:
 - `6.6` paragraphs over six sentences
 - `H.1` marketing adjectives, `H.2` slop words, `H.4` words this project denied
 
-The 4 flagged:
+The 7 flagged:
 
+- `1.2` an approved word used as a part of speech it does not have
+- `1.7` a technical noun used as a verb
 - `1.11` two names for one thing
+- `1.13` a technical verb used as a noun
 - `2.1` noun clusters
 - `3.7` an action written as a noun
 - `H.3` hedging preambles
+
+Rules 1.7 and 1.13 read the parts of speech in `words.allow`. A project that
+lists only bare words never sees either one: a bare entry counts as a noun, but
+that is silence, and neither rule reads silence as a decision.
 
 ## Exit codes
 
@@ -317,21 +343,6 @@ The 4 flagged:
 
 Exit 3 never becomes exit 0. A linter that passes because it has no dictionary is
 worse than no linter, because the gate still looks green.
-
-## Tests
-
-```bash
-python3 tests/test_ste.py
-```
-
-106 tests. The ones that need the built data report as skipped until you build
-it, so a fresh clone still runs 45 of them.
-
-They cover the word counting, the sentence segmentation, and the masking. They
-check the policy table in both directions, every exit code, the locale contract,
-the marker commands, and each behaviour of the hook. The tests check the example
-and index parsers on text written for the test. ASD holds the copyright to the
-standard, and this repository commits its tests.
 
 ## What it does not do
 

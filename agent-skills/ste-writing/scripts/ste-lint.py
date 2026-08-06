@@ -190,27 +190,151 @@ class Config:
     and `words` is the vocabulary this project decided on.
     """
 
+    # What each part of the file has to be. A hand-edited file gets hand-edit
+    # mistakes, and every one of these used to end somewhere unhelpful: a list
+    # where `deny` belongs raised AttributeError from inside a comprehension,
+    # and a string where a list belongs was read one character at a time.
+    SHAPES = {
+        "settings": dict, "words": dict, "settings.locale": str,
+        "settings.exclude": list, "words.allow": list, "words.deny": dict,
+        "words.prefer": dict,
+    }
+
     def __init__(self, raw: dict | None = None, path: Path | None = None) -> None:
         raw = raw or {}
         self.path = path
-        settings: dict = raw.get("settings", {})
-        words: dict = raw.get("words", {})
+        settings: dict = self.section(raw, "settings")
+        words: dict = self.section(raw, "words")
 
-        self.locale: str = settings.get("locale", "")
-        self.exclude: list[str] = settings.get("exclude", [])
+        self.locale: str = self.section(settings, "locale", "settings")
+        self.exclude: list[str] = self.section(settings, "exclude", "settings")
 
-        self.allow: set[str] = {w.lower() for w in words.get("allow", [])}
-        self.deny: dict[str, str] = {
-            w.lower(): replacement
-            for w, replacement in words.get("deny", {}).items()
-            if not w.startswith("_")
-        }
+        self.allow: set[str] = set()
+        self.allow_pos: dict[str, set[str]] = {}
+        self.allow_forms: dict[str, set[str]] = {}
+        # The words whose part of speech the project actually wrote down. A bare
+        # entry counts as a noun, which is what rule 2.1 needs, but it is silence
+        # and not a statement that the word is never a verb. Rule 1.7 asks for
+        # the statement. See tagged().
+        self.allow_stated: set[str] = set()
+        for entry in self.section(words, "allow", "words"):
+            word, pos, forms = self.read_allowed(entry)
+            self.allow.add(word)
+            self.allow_pos[word] = pos
+            self.allow_forms[word] = forms
+            if isinstance(entry, dict) and "pos" in entry:
+                self.allow_stated.add(word)
+
+        self.deny: dict[str, str] = {}
+        for word, replacement in self.section(words, "deny", "words").items():
+            if word.startswith("_"):
+                continue
+            self.expect(replacement, str, f"words.deny: “{word}”")
+            self.deny[word.lower()] = replacement
+
         # Stored as name -> [variants]; the linter wants variant -> name.
-        self.prefer: dict[str, str] = {
-            variant.lower(): name
-            for name, variants in words.get("prefer", {}).items()
-            if not name.startswith("_")
-            for variant in variants
+        self.prefer: dict[str, str] = {}
+        for name, variants in self.section(words, "prefer", "words").items():
+            if name.startswith("_"):
+                continue
+            self.expect(variants, list, f"words.prefer: “{name}”")
+            for variant in variants:
+                self.expect(variant, str, f"words.prefer: “{name}”")
+                self.prefer[variant.lower()] = name
+
+    def expect(self, value: object, kind: type, where: str) -> None:
+        """Refuse a value of the wrong type, and say where it is.
+
+        Every silent mis-shape this catches read as something plausible before:
+        "forms": "caches" put five single letters into the noun list, and
+        "prefer": {"repository": "repo"} made four one-letter variants.
+        """
+        if isinstance(value, kind):
+            return
+        article = "a list" if kind is list else "an object" if kind is dict else "text"
+        prefix = f"{self.path}: " if self.path else ""
+        raise LintError(
+            f"{prefix}{where} is {type(value).__name__}, and it has to be "
+            f"{article}."
+        )
+
+    def section(self, holder: dict, name: str, parent: str = "") -> object:
+        """One named part of the marker file, checked before it is read."""
+        path = f"{parent}.{name}" if parent else name
+        kind = self.SHAPES[path]
+        value = holder.get(name, kind())
+        self.expect(value, kind, path)
+        return value
+
+    def read_allowed(self, entry: object) -> tuple[str, set[str], set[str]]:
+        """One words.allow entry, as (word, parts of speech, irregular forms).
+
+        A bare string is a noun, which is what this section meant before it could
+        say anything else. The object form is for a word that is also a verb:
+        without it every allowed word is asserted to be a noun, and rule 2.1
+        counts "Cache the file" as the start of a noun cluster.
+
+        `forms` is for a word whose plural inflect() cannot guess. Regular forms
+        are generated, so most entries need only the part of speech.
+        """
+        where = f"{self.path}: words.allow" if self.path else "words.allow"
+        if isinstance(entry, str):
+            return entry.lower(), {"n"}, set()
+        if not isinstance(entry, dict):
+            raise LintError(
+                f"{where} holds {entry!r}. An entry is a word, or an object "
+                'like {"word": "cache", "pos": ["n", "v"]}.'
+            )
+        word = entry.get("word")
+        if not isinstance(word, str) or not word.strip():
+            raise LintError(
+                f'{where}: {entry!r} has no "word". An object entry names the '
+                'word it is about: {"word": "cache", "pos": ["n", "v"]}.'
+            )
+        raw_pos = entry.get("pos", ["n"])
+        self.expect(raw_pos, list, f'{where}: “{word}” pos')
+        pos = set()
+        for tag in raw_pos:
+            self.expect(tag, str, f'{where}: “{word}” pos')
+            pos.add(tag)
+        if not pos:
+            raise LintError(
+                f"{where}: “{word}” has an empty pos. Give at least one, or "
+                "write the word on its own to mean a noun."
+            )
+        unknown = sorted(pos - set(ste_data.PARTS_OF_SPEECH))
+        if unknown:
+            raise LintError(
+                f"{where}: “{word}” has the part of speech {', '.join(unknown)}, "
+                f"which is not one the dictionary uses. Choose from: "
+                f"{', '.join(ste_data.PARTS_OF_SPEECH)}."
+            )
+
+        raw_forms = entry.get("forms", [])
+        self.expect(raw_forms, list, f'{where}: “{word}” forms')
+        forms = set()
+        for form in raw_forms:
+            self.expect(form, str, f'{where}: “{word}” forms')
+            forms.add(form.lower())
+        return word.lower(), pos, forms
+
+    def tagged(self, tags: frozenset[str], without: frozenset[str] = frozenset(),
+               stated: bool = False) -> set[str]:
+        """Allowed words with any of `tags` and none of `without`.
+
+        Rules 1.7 and 1.13 are each about a word the project declared as one part
+        of speech and then used as the other, so both start here.
+
+        `stated` keeps to the words whose part of speech the project wrote out.
+        Rule 1.7 needs it: a bare entry defaults to a noun so that rule 2.1 keeps
+        working, and reading that default as "and never a verb" would report
+        "cached" in every project that ever wrote "cache" on its own.
+        """
+        return {
+            word
+            for word, pos in self.allow_pos.items()
+            if pos & tags and not pos & without
+            and (not stated or word in self.allow_stated)
         }
 
     def validate(self) -> None:
@@ -414,6 +538,8 @@ class Linter:
         self.approved_lemmas: dict = vocabulary.approved_lemmas
         # The subset the linter fails on. See select_slop for why it is a subset.
         self.slop_forms: dict[str, str] = vocabulary.slop_forms
+        # Rule 1.2. See ste_data.overreach for what is in here and what is not.
+        self.overreach_forms: dict[str, str] = vocabulary.overreach_forms
         self.phrasal: list[str] = vocabulary.phrasal
         self.replacements = vocabulary.replacements
         self.marketing: set[str] = set(ste_policy.MARKETING)
@@ -431,11 +557,69 @@ class Linter:
         # Rule 2.1 needs to know which words are nouns. The standard names 239 of
         # them, which is too few to see a cluster in software prose, so the
         # project's own words are the lever that makes the check work at all.
+        #
+        # Only the words the project called nouns. A bare entry means "n", so a
+        # project that never used the object form sees what it saw before, and
+        # one that tagged "cache" as a verb too stops having "Cache the file"
+        # read as the start of a cluster.
+        #
+        # The forms are generated here rather than stemmed at the lookup, so
+        # check_noun_clusters stays a set test per token. Over-generating is safe
+        # in this direction: a form that is not really a word cannot appear in
+        # prose, and rule 2.1 only ever warns. The allowlist is the other
+        # direction and stays on declared(), where a spurious form would silence
+        # a finding instead of raising one.
         self.nouns = {
             lemma
             for lemma, entry in self.approved_lemmas.items()
             if "n" in entry["pos"] or "TN" in entry["pos"]
-        } | self.allow
+        }
+        for word in config.tagged(ste_data.NOUN_TAGS):
+            self.nouns |= ste_data.inflect(word, ["n"])
+            self.nouns |= config.allow_forms.get(word, set())
+
+        # Every form of a word the project called a verb, whether or not it is
+        # also a noun. Rule 2.1 uses this to refuse to start a cluster at an
+        # imperative: "cache" is honestly both parts of speech, so no tag can
+        # settle "Cache config file request" and only the position can.
+        self.project_verbs: set[str] = set()
+        declared_verbs = config.tagged(ste_data.VERB_TAGS)
+        for word in declared_verbs:
+            self.project_verbs |= ste_data.inflect(word, ["v"])
+
+        # Rule 1.2 does not argue with a project that declared the word a verb,
+        # per rules 1.6 and 1.8. The allowlist test in check_words cannot do this
+        # on its own: declared() stems the plural, never "-ed", so it lets
+        # "checked" through even where the project called "check" a verb.
+        self.overreach_forms = {
+            form: lemma
+            for form, lemma in self.overreach_forms.items()
+            if lemma not in declared_verbs
+        }
+
+        # Rule 1.7, a technical noun used as a verb. The verb forms of a word the
+        # project declared a noun and not a verb, less the forms the noun itself
+        # has: that difference is "-ed" and "-ing", and it drops the "-s" that
+        # cannot be told apart from the plural.
+        # Only the words whose part of speech the project wrote out: a bare entry
+        # is silence, not a statement that the word is never a verb.
+        self.noun_as_verb: dict[str, str] = {}
+        for word in config.tagged(ste_data.NOUN_TAGS, without=ste_data.VERB_TAGS,
+                                  stated=True):
+            for form in ste_data.inflect(word, ["v"]) - ste_data.inflect(word, ["n"]):
+                self.noun_as_verb[form] = word
+
+        # Rule 1.13, a technical verb used as a noun. A determiner in front of it
+        # is the signal, so the words go into one alternation built at load.
+        self.verb_as_noun: dict[str, str] = {}
+        for word in config.tagged(ste_data.VERB_TAGS, without=ste_data.NOUN_TAGS):
+            for form in ste_data.inflect(word, ["n"]):
+                self.verb_as_noun[form] = word
+        self.determined_verb = re.compile(
+            rf"\b(?:the|a|an|this|that|these|those)\s+"
+            rf"({'|'.join(sorted(map(re.escape, self.verb_as_noun))) or r'(?!)'})\b",
+            re.I,
+        )
 
     # -- helpers -----------------------------------------------------------
 
@@ -490,9 +674,60 @@ class Linter:
 
     # -- words -------------------------------------------------------------
 
+    # Half of what rule 1.2 counts as a subject. The other half is a noun, which
+    # the linter already knows from the dictionary and words.allow.
+    SUBJECT_PRONOUNS = frozenset({
+        "anybody", "anyone", "everybody", "everyone", "he", "i", "it", "nobody",
+        "none", "she", "somebody", "someone", "they", "we", "which", "who",
+        "you",
+    })
+
+    def reads_as_a_verb(self, words: list[re.Match], index: int) -> bool:
+        """True when an approved noun really is being used as the verb here.
+
+        Rule 1.2 needs to tell "it named them" from "named sections", and the
+        second is the past participle as an adjective, which rule 3.3 permits
+        outright. The first try asked the question the other way round, by
+        suppressing a form whose next word is a noun. That fails: the dictionary
+        names 239 nouns, and "sections", "examples", and "agents" are not among
+        them, so the suppression almost never fires. Over this repository's prose
+        it left 10 findings of which 2 were real.
+
+        So this asks for evidence instead of absence. A subject in front of the
+        word is the signal, and a subject is a pronoun or a noun. Measured over
+        the same prose and the phrases that version got wrong:
+
+            "it named them"                    reported, and right
+            "text nobody checked"              reported, and right
+            "the parser log named it"          reported, and right
+            "the config file named data.json"  reported, and wrong
+            "175 worked examples"              quiet
+            "the worked examples"              quiet
+            "then named sections"              quiet
+            "covers named organizations"       quiet
+            "skills for coding agents"         quiet
+            "in a structured way"              quiet
+            "grouped so you decide once"       quiet
+
+        Three right out of four. The one it gets wrong is the reduced relative
+        clause, "the file named X", where the participle identifies the noun in
+        front of it instead of taking it as a subject. Telling that from "the log
+        named it" needs a parser, and this does not have one.
+
+        Pronouns alone would be four out of four, and would report none of the
+        three, because a noun subject is the ordinary way to write this. A rule
+        that is right every time about almost nothing protects almost nothing,
+        and this one only ever warns.
+        """
+        if index == 0:
+            return False
+        previous = words[index - 1].group().lower()
+        return previous in self.SUBJECT_PRONOUNS or previous in self.nouns
+
     def check_words(self, document: Document) -> list[Finding]:
         findings: list[Finding] = []
-        for match in WORD.finditer(document.prose):
+        words = list(WORD.finditer(document.prose))
+        for index, match in enumerate(words):
             word = match.group()
             lower = word.lower()
             offset = match.start()
@@ -537,10 +772,40 @@ class Linter:
                 ))
                 continue
 
+            # Rule 1.7, before the allowlist can permit the word. These forms do
+            # not reach that check anyway: declared() stems the plural and the
+            # possessive, never "-ed" or "-ing", so "cached" produces nothing at
+            # all today.
+            if self.active("1.7") and (noun := self.noun_as_verb.get(lower)):
+                findings.append(self.make(
+                    "1.7", "technical_noun_as_verb", document, offset, word,
+                    f"“{noun}” is a technical noun in this project, used here "
+                    "as a verb.",
+                    f"Use an approved verb and keep “{noun}” as the noun.",
+                ))
+                continue
+
             # A word in words.allow is one this project decided on, per rules
             # 1.6 and 1.8. That answers the question the slop check is about to
             # ask, so there is nothing left to say about it.
             if self.declared(lower, self.allow):
+                continue
+
+            # Rule 1.2, after the allowlist: a project that declared the word has
+            # already answered for it. "check" and "access" are approved nouns,
+            # so "checked" and "accessing" use them as something they are not.
+            if (
+                self.active("1.2")
+                and (approved := self.overreach_forms.get(lower))
+                and self.reads_as_a_verb(words, index)
+            ):
+                findings.append(self.make(
+                    "1.2", "wrong_part_of_speech", document, offset, word,
+                    f"“{approved}” is approved as "
+                    f"{' and '.join(self.approved_lemmas[approved]['pos'])}, "
+                    "and this is a verb form of it.",
+                    f"Use an approved verb, and keep “{approved}” as written.",
+                ))
                 continue
 
             if self.active("H.2") and (slop := self.slop_forms.get(lower)):
@@ -548,8 +813,9 @@ class Linter:
                     "H.2", "unapproved_alternative", document, offset, word,
                     f"“{slop}” is not an approved word.",
                     self.replacement_hint(slop)
-                    or f"Replace it, or add it to the glossary in {MARKER} "
-                       "if this project means it as a technical noun.",
+                    or f"Replace it, or add it to {MARKER} if this project "
+                       "means it as a technical noun: --add-word "
+                       f"{lower}, or {lower}:n,v if it is also a verb.",
                 ))
         return findings
 
@@ -602,6 +868,21 @@ class Linter:
                         rule, check, document, match.start(), match.group(),
                         f"“{phrase}” {message}", suggestion,
                     ))
+
+        # Rule 1.13. A determiner in front of a word the project declared a verb
+        # and not a noun is the readable signal that it has become a noun: "the
+        # merge", "a commit". The message names the base word, not the form.
+        if self.active("1.13"):
+            for match in self.determined_verb.finditer(document.prose):
+                verb = self.verb_as_noun[match.group(1).lower()]
+                findings.append(self.make(
+                    "1.13", "technical_verb_as_noun", document, match.start(),
+                    match.group(),
+                    f"“{verb}” is a technical verb in this project, used here "
+                    "as a noun.",
+                    f"Name the thing, or write the sentence with “{verb}” as "
+                    "the verb.",
+                ))
         return findings
 
     # -- structure ---------------------------------------------------------
@@ -641,15 +922,45 @@ class Linter:
             findings.extend(self.check_noun_clusters(document))
         return findings
 
+    def sentence_starts(self, document: Document) -> set[int]:
+        """The offset of the first word of every sentence.
+
+        Built the way check_structure builds its sentences, so a heading and a
+        list item each open one, and a sentence that wraps over two lines does
+        not open two.
+        """
+        starts: set[int] = set()
+        for start, end, _ in blocks(document.raw):
+            block = document.prose[start:end].replace("\n", " ")
+            for text, offset in split_sentences(block, start):
+                if match := WORD.search(text):
+                    starts.add(offset + match.start())
+        return starts
+
     def check_noun_clusters(self, document: Document) -> list[Finding]:
         """Rule 2.1, a multi-word noun of more than three words.
 
         Without a part-of-speech tagger this reports only a run of four or more
         words that the dictionary itself calls nouns, which keeps it quiet enough
         to be worth reading. It warns. It never fails a run.
+
+        A cluster cannot open on a sentence-initial project verb. "cache" and
+        "commit" are honestly both parts of speech, so tagging them settles
+        nothing on its own, and the imperative is the one position where the verb
+        reading is certain. Without this, "Cache config file request" reads as a
+        four-word noun cluster.
         """
         findings: list[Finding] = []
         run: list[re.Match] = []
+        starts = self.sentence_starts(document) if self.project_verbs else set()
+
+        def opens_a_cluster(match: re.Match) -> bool:
+            if match.group().lower() not in self.nouns:
+                return False
+            return not (
+                match.start() in starts
+                and match.group().lower() in self.project_verbs
+            )
 
         def close() -> None:
             if len(run) >= 4:
@@ -662,11 +973,14 @@ class Linter:
 
         for match in WORD.finditer(document.prose):
             adjacent = bool(run) and match.start() - run[-1].end() <= 1
-            if match.group().lower() in self.nouns and (adjacent or not run):
+            # Mid-cluster a noun is a noun. Only the opening word is tested for
+            # the imperative, because that is the only place the reading is in
+            # doubt.
+            if run and adjacent and match.group().lower() in self.nouns:
                 run.append(match)
                 continue
             close()
-            run = [match] if match.group().lower() in self.nouns else []
+            run = [match] if opens_a_cluster(match) else []
         close()
         return findings
 
@@ -938,7 +1252,12 @@ def excluded(path: Path, config: "Config") -> bool:
     return matches(path, config.exclude)
 
 
-MARKER_VERSION = "v1.0.0"
+# Written into every marker, and not read back yet: there is no check_version
+# for this file the way there is for the dictionary. v1.1.0 because words.allow
+# widened to take an object as well as a word. This linter reads both shapes,
+# which is what makes it a minor. A skill older than this one does not: it calls
+# .lower() on the entry and raises AttributeError.
+MARKER_VERSION = "v1.1.0"
 
 # Mirrors data/ste-dictionary.json: meta first, so that `head` on the file says
 # what wrote it, then named sections.
@@ -977,10 +1296,16 @@ MARKER_TEMPLATE = {
             "         Add with: ste-lint.py --deny <word> [replacement]",
             "",
             "allow    words this project uses that the STE dictionary does not,",
-            "         per rules 1.6 and 1.8. Silences a finding, and teaches",
-            "         rule 2.1 that the word is a noun. A word here is one you",
-            "         decided on, not one you could not be bothered to fix.",
-            "         Add with: ste-lint.py --add-word <word> ...",
+            "         per rules 1.6 and 1.8. Silences a finding, and tells the",
+            "         linter the part of speech. A word here is one you decided",
+            "         on, not one you could not be bothered to fix.",
+            "           \"allow\": [\"artifact\", {\"word\": \"cache\", \"pos\": [\"n\",\"v\"]}]",
+            "         A plain word is a noun, which is what rule 2.1 counts. Tag",
+            "         a word that is also a verb, or rule 2.1 reads \"Cache the",
+            "         file\" as the start of a noun cluster. A noun-only word used",
+            "         as a verb is rule 1.7, and a verb-only word used as a noun",
+            "         is rule 1.13.",
+            "         Add with: ste-lint.py --add-word <word>[:<pos>,...] ...",
             "",
             "prefer   rule 1.11, one name for one thing, as name -> [variants].",
             "           \"prefer\": { \"repository\": [\"repo\"] }",
@@ -1027,13 +1352,68 @@ def edit_words(target: Path, change) -> int:
     return EXIT_CLEAN
 
 
+def allowed_word(entry: object) -> str:
+    """The word an existing words.allow entry is about.
+
+    An entry is a string or an object, so neither the duplicate check nor the
+    sort below can assume it has .lower().
+    """
+    return (entry if isinstance(entry, str) else entry.get("word", "")).lower()
+
+
+def parse_add_word(argument: str) -> str | dict:
+    """One --add-word argument, as the entry to write.
+
+    "cache:n,v" is the word and its parts of speech. A plain "log" stays a plain
+    string, so adding words in bulk after --triage writes what it always did.
+
+    What this refuses, it refuses so that the file it writes is one the linter
+    can read back. "--add-word :n,v" used to write an entry with no word in it,
+    and the next run then refused the whole marker.
+    """
+    word, _, tags = argument.partition(":")
+    if not word.strip():
+        raise LintError(
+            f"--add-word {argument!r}: there is no word in front of the “:”."
+        )
+    if len(word.split()) > 1:
+        raise LintError(
+            f"--add-word {argument!r}: “{word}” holds a space. The linter reads "
+            "prose one word at a time, so a multi-word entry never matches."
+        )
+    if not tags:
+        return word
+    pos, seen = [], set()
+    for tag in (tag.strip() for tag in tags.split(",")):
+        if tag and tag not in seen:
+            seen.add(tag)
+            pos.append(tag)
+    unknown = sorted(seen - set(ste_data.PARTS_OF_SPEECH))
+    if unknown:
+        raise LintError(
+            f"--add-word {argument}: {', '.join(unknown)} is not a part of "
+            f"speech the dictionary uses. Choose from: "
+            f"{', '.join(ste_data.PARTS_OF_SPEECH)}."
+        )
+    if not pos:
+        raise LintError(
+            f"--add-word {argument!r}: there is a “:” and no part of speech "
+            f"after it. Write “{word}” on its own to mean a noun."
+        )
+    return {"word": word, "pos": pos}
+
+
 def add_allowed(target: Path, new: list[str]) -> int:
     def change(words: dict) -> str:
         allow = words.get("allow", [])
-        known = {w.lower() for w in allow}
-        added = [w for w in new if w.lower() not in known]
-        words["allow"] = sorted(allow + added, key=str.lower)
-        return f"allow += {', '.join(added) or 'nothing new'}"
+        known = {allowed_word(entry) for entry in allow}
+        added = [
+            entry for entry in map(parse_add_word, new)
+            if allowed_word(entry) not in known
+        ]
+        words["allow"] = sorted(allow + added, key=allowed_word)
+        names = [allowed_word(entry) for entry in added]
+        return f"allow += {', '.join(names) or 'nothing new'}"
     return edit_words(target, change)
 
 
@@ -1102,22 +1482,25 @@ def main() -> int:
     args = parser.parse_args()
 
     marker = args.config or find_config(Path.cwd()) or (Path.cwd() / MARKER)
-    if args.init:
-        return write_marker(Path.cwd() / MARKER)
-    if args.add_word:
-        return add_allowed(marker, args.add_word)
-    if args.deny:
-        word, *rest = args.deny
-        return add_denied(marker, word, " ".join(rest))
-    if args.prefer:
-        if len(args.prefer) < 2:
-            parser.error("--prefer needs the name and at least one variant")
-        name, *variants = args.prefer
-        return add_preferred(marker, name, variants)
-
-    targets = args.files or ["-"]
-
     try:
+        # The marker-editing flags run inside the handler too. --add-word can
+        # refuse a part of speech it does not know, and that has to read as a
+        # message rather than a traceback.
+        if args.init:
+            return write_marker(Path.cwd() / MARKER)
+        if args.add_word:
+            return add_allowed(marker, args.add_word)
+        if args.deny:
+            word, *rest = args.deny
+            return add_denied(marker, word, " ".join(rest))
+        if args.prefer:
+            if len(args.prefer) < 2:
+                parser.error("--prefer needs the name and at least one variant")
+            name, *variants = args.prefer
+            return add_preferred(marker, name, variants)
+
+        targets = args.files or ["-"]
+
         # Reading a rule needs the rules and nothing else. It answers before the
         # dictionary is loaded, so a repository with no dictionary yet can still
         # find out what the rule it just failed actually says.

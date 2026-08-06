@@ -44,6 +44,22 @@ VERSION_PATTERN = re.compile(r"^v(?P<major>\d+)(?:\.(?P<minor>\d+))?(?:\.(?P<pat
 
 VOWELS = set("aeiou")
 
+# Parts of speech the dictionary uses. TN is a technical noun. The extractor
+# builds its headword pattern from this, and the linter validates a project's
+# own POS tags against it, so a tag one of them accepts cannot be a tag the
+# other has never heard of. The order is the extractor's, and the alternation it
+# builds depends on it: "n" before "num" only works because the closing
+# parenthesis makes the regex backtrack.
+PARTS_OF_SPEECH = (
+    "n", "v", "adj", "adv", "prep", "pron", "conj", "art", "int", "abbr",
+    "num", "det", "TN",
+)
+
+# The tags that make a word a noun for rule 2.1, and the ones that make it a
+# verb. Named here because three checks ask the same question.
+NOUN_TAGS = frozenset({"n", "TN"})
+VERB_TAGS = frozenset({"v"})
+
 
 class VersionError(Exception):
     """A built file does not match the code that reads it."""
@@ -144,6 +160,41 @@ def inflect(lemma: str, parts_of_speech: list[str]) -> set[str]:
     return {form for form in forms if form.isalpha()}
 
 
+def overreach(approved_lemmas: dict, approved_forms: set[str]) -> dict[str, str]:
+    """Verb forms of approved words the dictionary approves only as nouns.
+
+    Rule 1.2 says to use an approved word only as its specified part of speech.
+    STE approves CHECK and ACCESS as nouns, so "checked" and "accessed" break the
+    rule while "check" and "access" do not. This builds that map: form -> lemma.
+
+    Only lemmas whose parts of speech are all in {n, adj} are considered, and
+    only the "-ed" and "-ing" forms are kept. Both limits are load-bearing:
+
+      - Generating across every part of speech for every lemma produced forms for
+        775 of the 799 approved lemmas, nearly all of it nonsense, because it put
+        verb and comparative endings on closed-class words: "aed" and "aer" from
+        the article "a", "abouted" from the preposition "about". Nothing in prose
+        matches those, but nothing in the map should have to be ignored either.
+      - The "-s" form is dropped because it cannot be told apart from a plural.
+
+    Subtracting approved_forms last is the same guard the caller applies to the
+    unapproved words: an approved word always wins, so over-generating from one
+    lemma cannot make another lemma's legitimate word a violation. That guard is
+    exact here, because approved_forms is the union of every lemma's own forms.
+    """
+    open_class = {"n", "adj"}
+    forms: dict[str, str] = {}
+    for lemma, entry in approved_lemmas.items():
+        pos = set(entry["pos"])
+        if not pos or not pos <= open_class:
+            continue
+        generated = inflect(lemma, ["v"]) - inflect(lemma, sorted(pos)) - approved_forms
+        for form in generated:
+            if form.endswith(("ed", "ing")):
+                forms.setdefault(form, lemma)
+    return forms
+
+
 def house_extras() -> dict[str, dict]:
     """The unapproved words we add, which the standard never documents."""
     return {
@@ -231,6 +282,10 @@ class Vocabulary:
             for form, lemma in self.alternative_forms.items()
             if lemma in slop_lemmas
         }
+
+        self.overreach_forms: dict[str, str] = overreach(
+            self.approved_lemmas, self.approved_forms
+        )
 
         self.phrasal: list[str] = sorted(
             {
