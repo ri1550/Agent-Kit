@@ -358,7 +358,7 @@ class Marker(unittest.TestCase):
         path.write_text(json.dumps({"words": words}))
         return path
 
-    def run(self, marker: Path, *args: str) -> subprocess.CompletedProcess:
+    def lint(self, marker: Path, *args: str) -> subprocess.CompletedProcess:
         return subprocess.run(
             [sys.executable, str(LINTER), "--config", str(marker), *args],
             capture_output=True, text=True,
@@ -367,15 +367,15 @@ class Marker(unittest.TestCase):
     def test_add_word_appends_without_duplicating(self):
         marker = self.marker(allow=["webhook"])
         for _ in range(2):
-            self.run(marker, "--add-word", "endpoint", "webhook")
+            self.lint(marker, "--add-word", "endpoint", "webhook")
         self.assertEqual(
             json.loads(marker.read_text())["words"]["allow"], ["endpoint", "webhook"]
         )
 
     def test_deny_records_a_replacement_or_none(self):
         marker = self.marker()
-        self.run(marker, "--deny", "utilise", "use")
-        self.run(marker, "--deny", "synergy")
+        self.lint(marker, "--deny", "utilise", "use")
+        self.lint(marker, "--deny", "synergy")
         self.assertEqual(
             json.loads(marker.read_text())["words"]["deny"],
             {"synergy": "", "utilise": "use"},
@@ -383,8 +383,8 @@ class Marker(unittest.TestCase):
 
     def test_prefer_merges_variants(self):
         marker = self.marker()
-        self.run(marker, "--prefer", "repository", "repo")
-        self.run(marker, "--prefer", "repository", "repos")
+        self.lint(marker, "--prefer", "repository", "repo")
+        self.lint(marker, "--prefer", "repository", "repos")
         self.assertEqual(
             json.loads(marker.read_text())["words"]["prefer"],
             {"repository": ["repo", "repos"]},
@@ -396,7 +396,7 @@ class Marker(unittest.TestCase):
         marker.write_text(json.dumps({"glossary": ["webhook"]}))
         page = self.dir / "x.md"
         page.write_text("A webhook.\n")
-        result = self.run(marker, str(page))
+        result = self.lint(marker, str(page))
         self.assertEqual(result.returncode, ERROR)
         self.assertIn("words.allow", result.stderr)
 
@@ -404,7 +404,7 @@ class Marker(unittest.TestCase):
         marker = self.marker(allow=["utilise"], deny={"utilise": "use"})
         page = self.dir / "x.md"
         page.write_text("We utilise it.\n")
-        result = self.run(marker, str(page))
+        result = self.lint(marker, str(page))
         self.assertEqual(result.returncode, ERROR)
         self.assertIn("both", result.stderr)
 
@@ -716,10 +716,6 @@ class Detection(unittest.TestCase):
         "We utilized a comprehensive methodology to facilitate the rollout; "
         "it was designed to ensure success.\n"
     )
-    STE = (
-        "Install the pump. If the pressure is more than 800 kPa, close the valve.\n"
-        "Make sure that the seal is not damaged.\n"
-    )
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -884,9 +880,9 @@ class Hook(unittest.TestCase):
             env={**os.environ, "GIT_CONFIG_GLOBAL": "/dev/null"},
         )
 
-    def mark(self, **values) -> None:
+    def mark(self) -> None:
         (self.repo / ".ste-writing.json").write_text(
-            json.dumps({"words": {"allow": values.get("glossary", [])}})
+            json.dumps({"words": {"allow": []}})
         )
 
     def call(self, stop_hook_active: bool = False) -> dict:
