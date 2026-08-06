@@ -126,7 +126,6 @@ class Finding:
 class Document:
     """A file with its prose isolated from everything the rules do not cover."""
 
-    path: str
     raw: str
     prose: str  # same length as raw, with masked regions replaced by spaces
     line_starts: list[int] = field(default_factory=list)
@@ -194,7 +193,6 @@ class Config:
     def __init__(self, raw: dict | None = None, path: Path | None = None) -> None:
         raw = raw or {}
         self.path = path
-        self.meta: dict = raw.get("meta", {})
         settings: dict = raw.get("settings", {})
         words: dict = raw.get("words", {})
 
@@ -413,7 +411,6 @@ class Linter:
         self.config = config
 
         vocabulary = data["vocabulary"]
-        self.approved_forms: set[str] = vocabulary.approved_forms
         self.approved_lemmas: dict = vocabulary.approved_lemmas
         # The subset the linter fails on. See select_slop for why it is a subset.
         self.slop_forms: dict[str, str] = vocabulary.slop_forms
@@ -922,9 +919,9 @@ def print_subject(query: str) -> int:
 
 # --------------------------------------------------------------------------
 
-def build_document(path: str, raw: str) -> Document:
+def build_document(raw: str) -> Document:
     starts = [0] + [match.end() for match in re.finditer(r"\n", raw)]
-    return Document(path=path, raw=raw, prose=mask(raw), line_starts=starts)
+    return Document(raw=raw, prose=mask(raw), line_starts=starts)
 
 
 def matches(path: Path, patterns: list[str]) -> bool:
@@ -1018,7 +1015,7 @@ def write_marker(target: Path) -> int:
     return EXIT_CLEAN
 
 
-def edit_words(target: Path, section: str, change) -> int:
+def edit_words(target: Path, change) -> int:
     """Apply a change to one section of words, keeping the file readable."""
     config = read_marker(target)
     if config is None:
@@ -1037,7 +1034,7 @@ def add_allowed(target: Path, new: list[str]) -> int:
         added = [w for w in new if w.lower() not in known]
         words["allow"] = sorted(allow + added, key=str.lower)
         return f"allow += {', '.join(added) or 'nothing new'}"
-    return edit_words(target, "allow", change)
+    return edit_words(target, change)
 
 
 def add_denied(target: Path, word: str, replacement: str) -> int:
@@ -1046,7 +1043,7 @@ def add_denied(target: Path, word: str, replacement: str) -> int:
         deny[word.lower()] = replacement
         words["deny"] = dict(sorted(deny.items()))
         return f"deny += {word}" + (f" -> {replacement}" if replacement else "")
-    return edit_words(target, "deny", change)
+    return edit_words(target, change)
 
 
 def add_preferred(target: Path, name: str, variants: list[str]) -> int:
@@ -1057,7 +1054,7 @@ def add_preferred(target: Path, name: str, variants: list[str]) -> int:
         prefer[name] = merged
         words["prefer"] = dict(sorted(prefer.items()))
         return f"prefer += {name} over {', '.join(merged)}"
-    return edit_words(target, "prefer", change)
+    return edit_words(target, change)
 
 
 def main() -> int:
@@ -1159,7 +1156,7 @@ def main() -> int:
         for name in targets:
             if name == "-":
                 results["<stdin>"] = linter.lint(
-                    build_document("<stdin>", sys.stdin.read())
+                    build_document(sys.stdin.read())
                 )
                 continue
             path = Path(name)
@@ -1168,7 +1165,7 @@ def main() -> int:
             if excluded(path, config):
                 continue
             results[name] = linter.lint(
-                build_document(name, path.read_text(encoding="utf-8", errors="replace"))
+                build_document(path.read_text(encoding="utf-8", errors="replace"))
             )
     except (LintError, OSError, json.JSONDecodeError, KeyError) as error:
         print(f"ste-lint: {error}", file=sys.stderr)

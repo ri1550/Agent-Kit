@@ -94,16 +94,16 @@ fails the build, and does not switch a rule off in silence.
 
 ## The scripts
 
-| Script | Lines | What it does |
-|---|---|---|
-| `ste-lint.py` | 1188 | The gate. Reads prose, reports findings, returns an exit code |
-| `build-dictionary.py` | 879 | Turns your PDF into `data/` |
-| `localize.py` | 299 | Plans a locale, then checks what the agent wrote |
-| `ste_data.py` | 312 | The shapes of the built data, and the word lists |
-| `ste_policy.py` | 186 | The rule table, and the words STE never documents |
-| `hooks/ste-hook.py` | 209 | Stop hook. Inert without a marker file |
-| `remind.py` | 44 | Prints the rules no script can check |
-| `tests/test_ste.py` | 949 | 97 tests |
+| Script | What it does |
+|---|---|
+| `ste-lint.py` | The gate. Reads prose, reports findings, returns an exit code |
+| `build-dictionary.py` | Turns your PDF into `data/` |
+| `localize.py` | Plans a locale, then checks what the agent wrote |
+| `ste_data.py` | The shapes of the built data, and the word lists |
+| `ste_policy.py` | The rule table, and the words STE never documents |
+| `hooks/ste-hook.py` | Stop hook. Inert without a marker file |
+| `remind.py` | Prints the rules no script can check |
+| `tests/test_ste.py` | The test suite |
 
 ### build-dictionary.py
 
@@ -146,7 +146,7 @@ python3 scripts/ste-lint.py --rule 3.6               # the rule and its examples
 python3 scripts/ste-lint.py --rule 3.6 --full        # the text of the rule
 python3 scripts/ste-lint.py --subject hyphen         # which rule covers this?
 python3 scripts/ste-lint.py --rules                  # every rule and its tier
-python3 scripts/ste-lint.py --triage docs/           # every word to decide
+python3 scripts/ste-lint.py --triage docs/*.md       # every word to decide
 ```
 
 `--rule` gives the statement and the worked examples, which is what an agent
@@ -306,8 +306,8 @@ worse than no linter, because the gate still looks green.
 python3 tests/test_ste.py
 ```
 
-97 tests. The ones that need the built data report as skipped until you build it,
-so a fresh clone still runs 38 of them.
+106 tests. The ones that need the built data report as skipped until you build
+it, so a fresh clone still runs 45 of them.
 
 They cover the word counting, the sentence segmentation, and the masking. They
 check the policy table in both directions, every exit code, the locale contract,

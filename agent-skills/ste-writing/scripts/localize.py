@@ -45,7 +45,7 @@ SUFFIXES = [
     "ize", "izes", "ized", "izing", "ization", "izer",
     "yze", "yzes", "yzed", "yzing",
     "og", "ogs",
-    "eled", "eling", "eler", "eled",
+    "eled", "eling", "eler",
 ]
 
 # -our, -re, -ence, and the rest are not safe as suffix rules: "or" alone pulls

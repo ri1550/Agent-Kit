@@ -117,7 +117,7 @@ in every file.
 To see every word this project trips on, grouped so you decide each one once:
 
 ```bash
-python3 <skill>/scripts/ste-lint.py --triage docs/
+python3 <skill>/scripts/ste-lint.py --triage docs/*.md
 ```
 
 Use `allow` for the words the project decided on, not for the words you did not

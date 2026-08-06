@@ -140,7 +140,8 @@ def inflect(lemma: str, parts_of_speech: list[str]) -> set[str]:
         else:
             forms.update({doubled() + "er", doubled() + "est", stem + "ly"})
 
-    return {form for form in forms if form.isalpha() or " " in form}
+    # A lemma that holds a space returned above, so no form can hold one here.
+    return {form for form in forms if form.isalpha()}
 
 
 def house_extras() -> dict[str, dict]:
@@ -196,8 +197,9 @@ class Vocabulary:
     def __init__(self, dictionary: dict, locale: dict | None = None) -> None:
         self.meta: dict = dictionary.get("meta", {})
         # Check before touching the content. A dictionary built by different
-        # code should say so, not fail later on a missing key.
-        self.version = check_version(self.meta)
+        # code should say so, not fail later on a missing key. The call is the
+        # guard: it raises, and nothing needs the version it returns.
+        check_version(self.meta)
 
         approved = dictionary["approved"]
         alternatives = dictionary["alternatives"]
@@ -285,8 +287,7 @@ class RuleBook:
     def __init__(self, raw: dict) -> None:
         self.meta: dict = raw.get("meta", {})
         # Check before touching the content, exactly as the dictionary does.
-        self.version = check_version(self.meta, RULES_VERSION, "rule book")
-        self.sections: dict = raw.get("sections", {})
+        check_version(self.meta, RULES_VERSION, "rule book")
         self.rules: dict = raw.get("rules", {})
         self.subjects: dict = raw.get("subjects", {})
 

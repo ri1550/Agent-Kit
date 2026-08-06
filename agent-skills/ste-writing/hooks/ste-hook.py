@@ -132,7 +132,9 @@ def main() -> int:
         allow()  # Not an opted-in repository. Do nothing, quietly.
 
     try:
-        config = json.loads((root / MARKER).read_text(encoding="utf-8"))
+        # Read for the error, not for the content. The linter parses the marker
+        # itself, and a marker this hook cannot read means the gate is broken.
+        json.loads((root / MARKER).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         allow(systemMessage=f"ste-writing: cannot read {MARKER} ({error}). Skipped.")
 

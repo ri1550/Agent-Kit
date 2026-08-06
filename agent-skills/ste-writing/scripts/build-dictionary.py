@@ -661,10 +661,6 @@ def write_rules(out: Path, meta: dict, records: dict[str, dict],
     }
     document = {
         "meta": meta,
-        "sections": {
-            section: name.replace("-", " ")
-            for section, name in sorted(SECTION_NAMES.items())
-        },
         "rules": rules,
         "subjects": dict(sorted(subjects.items())),
     }
