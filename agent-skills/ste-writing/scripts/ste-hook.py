@@ -81,14 +81,19 @@ def changed_prose(root: Path) -> list[Path]:
     return files
 
 
-def summarize(report: dict, limit: int = MAX_REPORTED) -> str:
+def summarize(report: dict, tier: str = "enforced", limit: int = MAX_REPORTED) -> str:
+    """The findings of one tier, as lines the agent can act on.
+
+    The tier is a parameter because both callers need it. Reporting the flagged
+    findings with this hardwired to "enforced" printed the "resolve them" heading
+    and then nothing at all under it.
+    """
     lines = []
     shown = 0
     for path, findings in report.get("files", {}).items():
-        enforced = [f for f in findings if f.get("tier") == "enforced"]
-        if not enforced:
-            continue
-        for finding in enforced:
+        for finding in findings:
+            if finding.get("tier") != tier:
+                continue
             if shown >= limit:
                 break
             lines.append(
@@ -99,7 +104,7 @@ def summarize(report: dict, limit: int = MAX_REPORTED) -> str:
                 + (f" -> {finding['suggestion']}" if finding.get("suggestion") else "")
             )
             shown += 1
-    total = report.get("enforced", 0)
+    total = report.get(tier, 0)
     if total > shown:
         lines.append(f"  ... and {total - shown} more")
     return "\n".join(lines)
@@ -190,7 +195,7 @@ def main() -> int:
                 "hookEventName": "Stop",
                 "additionalContext": (
                     "ste-writing raised flagged findings. They do not block the turn. "
-                    "Resolve them or say why not:\n" + summarize(report, MAX_REPORTED)
+                    "Resolve them or say why not:\n" + summarize(report, "flagged")
                 ),
             },
         )
