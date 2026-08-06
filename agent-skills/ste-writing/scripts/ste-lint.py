@@ -776,15 +776,76 @@ def report_json(results: dict[str, list[Finding]]) -> str:
     ) + "\n"
 
 
-def print_rule(rule_id: str) -> int:
-    """Print one rule: its tier, its statement, and the standard's own text."""
+NOT_BUILT = "The rule text is not built. Run build-dictionary.py to get it."
+
+# Enough to show the shape of the rule without printing the whole standard at
+# an agent that came here to fix one finding.
+EXAMPLE_LIMIT = 6
+
+
+def load_rule_book() -> ste_data.RuleBook | None:
+    """The writing rules, or None when they are not built.
+
+    Loaded here and nowhere else. Nothing but a rule lookup needs them, and
+    every lint of every file would otherwise pay to parse 53 rules it never
+    reads.
+    """
+    path = DATA / "ste-rules.json"
+    if not path.is_file():
+        return None
+    try:
+        return ste_data.RuleBook(load_json(path, "The STE rules"))
+    except ste_data.VersionError as error:
+        raise LintError(
+            f"The STE rules cannot be read: {error}.\n"
+            "Build them again from your own copy of the standard:\n"
+            f"  python3 {HERE / 'build-dictionary.py'} "
+            "--pdf /path/to/ASD-STE100_ISSUE9.pdf"
+        ) from error
+
+
+def print_examples(record: dict) -> None:
+    examples = record.get("examples", [])
+    if not examples:
+        return
+    print()
+    print("Examples:")
+    for example in examples[:EXAMPLE_LIMIT]:
+        if example["non_ste"]:
+            print(f"  Non-STE  {example['non_ste']}")
+        print(f"      STE  {example['ste']}")
+        print()
+    if len(examples) > EXAMPLE_LIMIT:
+        print(f"  ({len(examples) - EXAMPLE_LIMIT} more, in the full rule)")
+
+
+def print_rule(rule_id: str, full: bool = False) -> int:
+    """Print one rule: its tier, its statement, and its worked examples.
+
+    The tier and the check come from ste_policy.py, and everything else comes
+    from data/ste-rules.json. The join happens here, at the moment of printing,
+    which is why a tier that changes needs no rebuild.
+    """
+    rule_id = ste_data.normalize_rule_id(rule_id)
     entry = ste_policy.RULES.get(rule_id)
-    if entry is None:
+    book = load_rule_book()
+    record = book.rule(rule_id) if book else None
+
+    if entry is None and record is None:
         print(f"ste-lint: no rule {rule_id}", file=sys.stderr)
+        if book is None and re.match(r"^\d+\.\d+$|^GR-\d+$", rule_id):
+            print(f"ste-lint: {NOT_BUILT}", file=sys.stderr)
         return EXIT_ERROR
 
-    print(f"Rule {rule_id} — {entry.tier}" + (f" (check: {entry.check})" if entry.check else ""))
-    print(entry.short)
+    if entry is not None:
+        print(f"Rule {rule_id} — {entry.tier}"
+              + (f" (check: {entry.check})" if entry.check else ""))
+        print(entry.short)
+    else:
+        # A general recommendation. ASD says these are not rules, so they have
+        # no tier and no check, and the linter never raises one.
+        title = record.get("title", "")
+        print(f"{rule_id} — general recommendation" + (f", {title}" if title else ""))
 
     if rule_id in ste_policy.HOUSE_RULES:
         print()
@@ -792,31 +853,64 @@ def print_rule(rule_id: str) -> int:
         print("text to read. The finding's suggestion is the whole answer.")
         return EXIT_CLEAN
 
-    body = read_rule_body(rule_id)
-    if body:
+    if record is None:
         print()
-        print(body)
-    else:
+        print(NOT_BUILT)
+        return EXIT_CLEAN
+
+    print()
+    print(record["text"] if full else record["statement"])
+    print_examples(record)
+    if not full:
         print()
-        print("The rule text is not built. Run build-dictionary.py to get it.")
+        print(f"For the rule in full: ste-lint.py --rule {rule_id} --full")
     return EXIT_CLEAN
 
 
-def read_rule_body(rule_id: str) -> str:
-    """Pull one rule out of the built rule files."""
-    section = rule_id.split(".")[0]
-    for path in sorted((DATA / "rules").glob(f"{section.zfill(2)}-*.md")):
-        text = path.read_text(encoding="utf-8", errors="replace")
-        match = re.search(
-            rf"^## Rule {re.escape(rule_id)}\s*$(.*?)(?=^## Rule |\Z)",
-            text, re.M | re.S,
-        )
-        if match:
-            body = match.group(1)
-            # print_rule already gave the tier and the statement.
-            body = re.sub(r"^- Tier: .*$", "", body, flags=re.M)
-            return re.sub(r"\n{3,}", "\n\n", body).strip()
-    return ""
+def print_rules() -> int:
+    """List every rule, which is the index the agent starts from."""
+    book = load_rule_book()
+    for rule_id in sorted(ste_policy.RULES, key=ste_data.rule_sort_key):
+        entry = ste_policy.RULES[rule_id]
+        print(f"  {rule_id:<5} {entry.tier:<9} {entry.short}")
+    if book:
+        for rule_id in book.ids("recommendation"):
+            title = book.rule(rule_id).get("title", "")
+            print(f"  {rule_id:<5} {'advice':<9} {title}")
+    else:
+        print()
+        print(NOT_BUILT)
+    return EXIT_CLEAN
+
+
+def print_subject(query: str) -> int:
+    """Answer "which rule covers this?" from the standard's own index.
+
+    The index was extracted and written to disk for two releases, and no code
+    ever opened it. It is the fastest way into 53 rules, and it is the
+    standard's own answer rather than ours.
+    """
+    book = load_rule_book()
+    if book is None:
+        print(f"ste-lint: {NOT_BUILT}", file=sys.stderr)
+        return EXIT_ERROR
+
+    found = book.find_subjects(query)
+    if not found:
+        print(f"ste-lint: no subject holds “{query}”", file=sys.stderr)
+        return EXIT_ERROR
+
+    for subject, entry in found:
+        print(subject)
+        for rule_id in entry["rules"]:
+            rule = ste_policy.RULES.get(rule_id)
+            record = book.rule(rule_id) or {}
+            tier = rule.tier if rule else "advice"
+            statement = rule.short if rule else record.get("title", "")
+            print(f"  {rule_id:<5} {tier:<9} {statement}")
+        if not entry["rules"]:
+            print(f"        {entry['raw']}")
+    return EXIT_CLEAN
 
 
 # --------------------------------------------------------------------------
@@ -986,6 +1080,17 @@ def main() -> int:
     )
     parser.add_argument("--rule", metavar="ID", help="print one rule, for example 3.6")
     parser.add_argument(
+        "--full", action="store_true",
+        help="with --rule, print the text of the rule and not only its statement",
+    )
+    parser.add_argument(
+        "--rules", action="store_true", help="list every rule and its tier"
+    )
+    parser.add_argument(
+        "--subject", metavar="TEXT",
+        help="which rule covers this? Searches the standard's own index",
+    )
+    parser.add_argument(
         "--fail-on-flagged",
         action="store_true",
         help="exit 1 on flagged findings too, not only enforced ones",
@@ -1009,6 +1114,16 @@ def main() -> int:
     targets = args.files or ["-"]
 
     try:
+        # Reading a rule needs the rules and nothing else. It answers before the
+        # dictionary is loaded, so a repository with no dictionary yet can still
+        # find out what the rule it just failed actually says.
+        if args.rule:
+            return print_rule(args.rule, args.full)
+        if args.subject:
+            return print_subject(args.subject)
+        if args.rules:
+            return print_rules()
+
         anchor = Path(targets[0]) if targets[0] != "-" else Path.cwd()
         config = load_config(args.config, anchor)
         dictionary = load_json(DATA / "ste-dictionary.json", "The STE dictionary")
@@ -1032,9 +1147,6 @@ def main() -> int:
             ) from error
 
         linter = Linter({"vocabulary": vocabulary}, config)
-
-        if args.rule:
-            return print_rule(args.rule)
 
         results: dict[str, list[Finding]] = {}
         for name in targets:

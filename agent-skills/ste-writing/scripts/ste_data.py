@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Vocabulary shared by the extractor and the linter.
+"""The shapes of the built data, shared by the extractor and the linter.
 
 The split this module keeps:
 
-    data/ste-dictionary.json   what ASD wrote. Built from your own copy of the
-                               standard, never committed.
+    data/ste-dictionary.json   the words ASD approved. Built from your own copy
+                               of the standard, never committed.
+    data/ste-rules.json        the writing rules ASD wrote, in the same
+                               condition and for the same reason.
     scripts/ste_policy.py      what we decided. The slop words, the marketing
                                words, and the words STE never documents.
     <repo>/.ste-writing.json   what the project decided. Its own words, and the
@@ -31,13 +33,19 @@ import ste_policy
 # that an older linter can still read.
 DICTIONARY_VERSION = "v1.0.0"
 
+# The release of data/ste-rules.json, which holds the writing rules. It is
+# versioned apart from the dictionary because the two files change for different
+# reasons: a new part of speech does not move a rule field, and a new rule field
+# does not move a word.
+RULES_VERSION = "v1.0.0"
+
 VERSION_PATTERN = re.compile(r"^v(?P<major>\d+)(?:\.(?P<minor>\d+))?(?:\.(?P<patch>\d+))?$")
 
 VOWELS = set("aeiou")
 
 
 class VersionError(Exception):
-    """The dictionary on disk does not match the code that reads it."""
+    """A built file does not match the code that reads it."""
 
 
 def parse_version(version: str) -> tuple[int, int, int]:
@@ -51,23 +59,23 @@ def parse_version(version: str) -> tuple[int, int, int]:
     )
 
 
-def check_version(meta: dict) -> str:
-    """Confirm the built dictionary is one this code can read.
+def check_version(meta: dict, wanted: str = DICTIONARY_VERSION,
+                  what: str = "dictionary") -> str:
+    """Confirm a built file is one this code can read.
 
-    A dictionary from before versioning has no "version" at all, which is the
-    clearest case of all: it was built by code that wrote a different shape.
+    A file from before versioning has no "version" at all, which is the clearest
+    case of all: it was built by code that wrote a different shape.
     """
     found = meta.get("version")
     if found is None:
         raise VersionError(
-            "this dictionary was built before the format was versioned"
+            f"this {what} was built before the format was versioned"
         )
     major = parse_version(found)[0]
-    wanted = parse_version(DICTIONARY_VERSION)[0]
-    if major != wanted:
+    if major != parse_version(wanted)[0]:
         raise VersionError(
-            f"this dictionary is {found}, and this code reads "
-            f"{DICTIONARY_VERSION.split('.')[0]}.x"
+            f"this {what} is {found}, and this code reads "
+            f"{wanted.split('.')[0]}.x"
         )
     return found
 
@@ -241,3 +249,64 @@ class Vocabulary:
 
     def replacements(self, lemma: str) -> list[str]:
         return self.alternative_lemmas.get(lemma, {}).get("replacements", [])
+
+
+def normalize_rule_id(rule_id: str) -> str:
+    """Accept "3.6", "gr-5", and "h.2" for the ids the data calls 3.6, GR-5, H.2."""
+    text = str(rule_id or "").strip()
+    return text.upper() if re.match(r"^(?:gr-|h\.)", text, re.I) else text
+
+
+def rule_sort_key(rule_id: str) -> tuple:
+    """Sort 1.2 before 1.10, and put the recommendations after the rules."""
+    match = re.match(r"^(?:GR-)?(\d+)(?:\.(\d+))?$", normalize_rule_id(rule_id))
+    if not match:
+        return (2, 0, 0, rule_id)
+    group = 1 if rule_id.upper().startswith("GR-") else 0
+    return (group, int(match.group(1)), int(match.group(2) or 0), "")
+
+
+class RuleBook:
+    """The writing rules of the standard, as data.
+
+    data/ste-rules.json holds what ASD wrote: the statement of each rule, its
+    text, its worked examples, and the standard's own subject index. What this
+    skill decided about a rule — its tier, and the linter check that implements
+    it — stays in ste_policy.py, and the two are joined when a rule is printed.
+
+    They used to be joined when the file was built. The extractor wrote the tier
+    into the rule text, and the reader deleted that line again with a regex, so
+    a tier that changed sat stale in data/ until somebody re-ran a 434-page PDF
+    through the extractor. A build-time join of two things that change at
+    different speeds is a build-time lie.
+    """
+
+    def __init__(self, raw: dict) -> None:
+        self.meta: dict = raw.get("meta", {})
+        # Check before touching the content, exactly as the dictionary does.
+        self.version = check_version(self.meta, RULES_VERSION, "rule book")
+        self.sections: dict = raw.get("sections", {})
+        self.rules: dict = raw.get("rules", {})
+        self.subjects: dict = raw.get("subjects", {})
+
+    def rule(self, rule_id: str) -> dict | None:
+        return self.rules.get(normalize_rule_id(rule_id))
+
+    def ids(self, kind: str | None = None) -> list[str]:
+        return sorted(
+            (
+                rule_id
+                for rule_id, record in self.rules.items()
+                if kind is None or record.get("kind") == kind
+            ),
+            key=rule_sort_key,
+        )
+
+    def find_subjects(self, query: str) -> list[tuple[str, dict]]:
+        """Subjects of the standard's own index that hold the query text."""
+        wanted = query.strip().lower()
+        return [
+            (subject, entry)
+            for subject, entry in sorted(self.subjects.items())
+            if wanted in subject.lower()
+        ]

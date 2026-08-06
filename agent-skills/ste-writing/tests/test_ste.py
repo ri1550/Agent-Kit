@@ -45,8 +45,12 @@ policy = load("ste_policy_module", SCRIPTS / "ste_policy.py")
 localize = load("ste_localize", SCRIPTS / "localize.py")
 
 DICTIONARY = DATA / "ste-dictionary.json"
+RULES = DATA / "ste-rules.json"
 have_data = DICTIONARY.is_file()
 needs_data = unittest.skipUnless(have_data, "no data/, run build-dictionary.py first")
+needs_rules = unittest.skipUnless(
+    RULES.is_file(), "no data/ste-rules.json, run build-dictionary.py first"
+)
 
 
 def run_linter(*args: str, stdin: str = "") -> subprocess.CompletedProcess:
@@ -405,7 +409,7 @@ class Marker(unittest.TestCase):
         self.assertIn("both", result.stderr)
 
 
-@needs_data
+@needs_rules
 class RuleLookup(unittest.TestCase):
     """--rule replaces reading a section file by hand."""
 
@@ -423,6 +427,199 @@ class RuleLookup(unittest.TestCase):
 
     def test_an_unknown_rule_is_an_error(self):
         self.assertEqual(run_linter("--rule", "9.99").returncode, ERROR)
+
+    def test_a_rule_arrives_with_its_examples(self):
+        # The examples are what an agent fixes a finding from. Before this they
+        # were prose inside a wall of prose, and nothing could reach them.
+        result = run_linter("--rule", "3.6")
+        self.assertIn("Examples:", result.stdout)
+        self.assertIn("Non-STE", result.stdout)
+
+    def test_the_statement_comes_first_and_the_text_is_asked_for(self):
+        short = run_linter("--rule", "2.1").stdout
+        full = run_linter("--rule", "2.1", "--full").stdout
+        self.assertLess(len(short), len(full))
+        self.assertIn("--full", short)
+
+    def test_a_recommendation_is_readable_and_has_no_tier(self):
+        # The subject index sends the reader to GR-5, so --rule has to open it.
+        result = run_linter("--rule", "gr-5")
+        self.assertEqual(result.returncode, CLEAN)
+        self.assertIn("GR-5", result.stdout)
+        self.assertIn("recommendation", result.stdout.lower())
+
+    def test_a_subject_gives_the_rules_that_cover_it(self):
+        result = run_linter("--subject", "hyphen")
+        self.assertEqual(result.returncode, CLEAN)
+        self.assertIn("8.2", result.stdout)
+
+    def test_an_unknown_subject_is_an_error(self):
+        self.assertEqual(run_linter("--subject", "kerning").returncode, ERROR)
+
+    def test_the_rule_list_holds_every_rule(self):
+        result = run_linter("--rules")
+        self.assertEqual(result.returncode, CLEAN)
+        for rule in policy.RULES:
+            self.assertIn(rule, result.stdout)
+
+
+class RuleParsing(unittest.TestCase):
+    """The example and index parsers, on text written for the test.
+
+    The standard is copyrighted, so nothing here quotes it. These check the
+    shapes its typesetter uses, which is what the parsers actually depend on.
+    """
+
+    def test_the_refused_sentence_pairs_with_the_one_that_replaces_it(self):
+        examples = build.parse_examples(
+            "Examples:\n"
+            "    Non-STE:      Perform an inspection of the valve.\n"
+            "        STE:      Examine the valve.\n"
+        )
+        self.assertEqual(
+            examples, [{"non_ste": "Perform an inspection of the valve.",
+                        "ste": "Examine the valve."}]
+        )
+
+    def test_a_pair_printed_the_other_way_round_is_not_crossed(self):
+        # Rule 3.6 prints the good sentence first. Assuming one order joined the
+        # second half of one example to the first half of the next.
+        examples = build.parse_examples(
+            "    Active:       The pump moves the fuel.\n"
+            "    Passive:      The fuel is moved by the pump.\n"
+            "\n"
+            "    Active:       The switch stops the motor.\n"
+            "    Passive:      The motor is stopped by the switch.\n"
+        )
+        self.assertEqual(
+            [example["ste"] for example in examples],
+            ["The pump moves the fuel.", "The switch stops the motor."],
+        )
+        self.assertEqual(examples[0]["non_ste"], "The fuel is moved by the pump.")
+
+    def test_a_sentence_that_wraps_stays_one_sentence(self):
+        examples = build.parse_examples(
+            "    Do not write: Make sure the valve that is on the left side of\n"
+            "                  the pump is open.\n"
+            "        WRITE:    Make sure that the left valve is open.\n"
+        )
+        self.assertEqual(
+            examples[0]["non_ste"],
+            "Make sure the valve that is on the left side of the pump is open.",
+        )
+
+    def test_a_counter_example_is_not_an_example(self):
+        # A sentence the standard prints to refuse is not one to copy.
+        self.assertEqual(
+            build.parse_examples(
+                "    STE:      Transmission stopped the data. (Incorrect, the "
+                "agent is wrong.)\n"
+            ),
+            [],
+        )
+
+    def test_a_refused_sentence_with_no_replacement_is_commentary(self):
+        self.assertEqual(
+            build.parse_examples("    Non-STE:   The unit is operational.\n"), []
+        )
+
+    def test_index_targets_resolve_to_rule_ids(self):
+        known = {"1.5", "1.6", "1.7", "2.1", "2.2", "8.2", "GR-5"}
+        self.assertEqual(build.resolve_targets("8.2, 1.5", known), ["1.5", "8.2"])
+        self.assertEqual(build.resolve_targets("2#", known), ["2.1", "2.2"])
+        self.assertEqual(
+            build.resolve_targets("1.5 thru 1.7", known), ["1.5", "1.6", "1.7"]
+        )
+        self.assertEqual(build.resolve_targets("9 – GR-5", known), ["GR-5"])
+        # The typesetter sometimes prints the point as a comma.
+        self.assertEqual(build.resolve_targets("1,5", known), ["1.5"])
+        # A target that names no rule is dropped, not kept as text.
+        self.assertEqual(build.resolve_targets("Part 2, Introduction", known), [])
+
+    def test_rules_sort_in_reading_order(self):
+        self.assertEqual(
+            sorted(["1.10", "GR-2", "1.2", "2.1"], key=data_module.rule_sort_key),
+            ["1.2", "1.10", "2.1", "GR-2"],
+        )
+
+    def test_rule_ids_are_taken_as_written_or_in_lower_case(self):
+        self.assertEqual(data_module.normalize_rule_id("gr-5"), "GR-5")
+        self.assertEqual(data_module.normalize_rule_id("h.2"), "H.2")
+        self.assertEqual(data_module.normalize_rule_id("3.6"), "3.6")
+
+    def test_a_rule_book_from_another_release_is_refused(self):
+        with self.assertRaises(data_module.VersionError):
+            data_module.RuleBook({"meta": {"version": "v99.0.0"}})
+        with self.assertRaises(data_module.VersionError):
+            data_module.RuleBook({"rules": {}})
+
+
+@needs_rules
+class RuleFile(unittest.TestCase):
+    """data/ste-rules.json holds what ASD wrote, and only that."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.raw = json.loads(RULES.read_text())
+        cls.book = data_module.RuleBook(cls.raw)
+
+    def test_meta_comes_first_for_diagnosis(self):
+        self.assertEqual(list(self.raw)[0], "meta")
+        self.assertEqual(self.raw["meta"]["built_by"], "build-dictionary.py")
+        self.assertEqual(self.raw["meta"]["version"], data_module.RULES_VERSION)
+
+    def test_the_recorded_counts_match_the_content(self):
+        counts = self.raw["meta"]["counts"]
+        self.assertEqual(counts["rules"], len(self.book.ids("rule")))
+        self.assertEqual(counts["recommendations"], len(self.book.ids("recommendation")))
+        self.assertEqual(counts["index_subjects"], len(self.book.subjects))
+
+    def test_the_rules_are_the_rules_the_table_names(self):
+        # A count of 53 passes while a rule arrives under the wrong id. The two
+        # sets have to be the same set, or a rule has no tier or cannot be read.
+        declared = set(policy.RULES) - set(policy.HOUSE_RULES)
+        self.assertEqual(set(self.book.ids("rule")), declared)
+
+    def test_the_rules_hold_no_house_rule(self):
+        # data/ is what ASD wrote. The house rules are ours, and the standard
+        # never had an opinion about the word "seamless".
+        for rule in policy.HOUSE_RULES:
+            self.assertNotIn(rule, self.book.rules)
+
+    def test_no_tier_is_written_into_the_data(self):
+        # The tier is ours and it changes without a rebuild, so it is joined to
+        # the record when the rule is printed. The old markdown baked it in and
+        # the reader then deleted the line again.
+        for record in self.book.rules.values():
+            self.assertNotIn("tier", record)
+            self.assertNotIn("check", record)
+
+    def test_every_rule_opens_with_its_statement(self):
+        for rule_id, record in self.book.rules.items():
+            self.assertTrue(record["statement"].strip(), rule_id)
+            flat = re.sub(r"\s+", " ", record["text"]).strip()
+            self.assertTrue(flat.startswith(record["statement"]), rule_id)
+
+    def test_every_recommendation_has_a_title(self):
+        ids = self.book.ids("recommendation")
+        self.assertEqual(len(ids), 8)
+        for rule_id in ids:
+            self.assertTrue(self.book.rule(rule_id)["title"].strip(), rule_id)
+
+    def test_every_subject_points_at_a_rule_that_exists(self):
+        for subject, entry in self.book.subjects.items():
+            for rule_id in entry["rules"]:
+                self.assertIn(rule_id, self.book.rules, subject)
+
+    def test_the_examples_survived_the_layout(self):
+        with_examples = [
+            rule for rule, record in self.book.rules.items() if record["examples"]
+        ]
+        self.assertGreater(len(with_examples), 20)
+        for record in self.book.rules.values():
+            for example in record["examples"]:
+                self.assertTrue(example["ste"].strip())
+                self.assertNotIn("\n", example["ste"])
 
 
 class Inflection(unittest.TestCase):

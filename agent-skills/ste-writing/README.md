@@ -64,7 +64,7 @@ global install switches nothing on by itself.
 
 ```
 ASD-STE100 PDF ──build-dictionary.py──> data/ste-dictionary.json   799 approved words
-   (yours)                              data/rules/*.md            53 rules
+   (yours)                              data/ste-rules.json        53 rules, 175 examples
                                               │
 scripts/ste_policy.py ────────────────────────┤   our tiers and slop words
 <repo>/.ste-writing.json ─────────────────────┤   your words, and the marker
@@ -79,12 +79,15 @@ Three sources of words, and they do not mix:
 
 | Source | Holds | Committed? |
 |---|---|---|
-| `data/ste-dictionary.json` | What ASD wrote | No. Built from your PDF |
+| `data/ste-dictionary.json` | The words ASD approved | No. Built from your PDF |
+| `data/ste-rules.json` | The rules ASD wrote | No. Built from your PDF |
 | `scripts/ste_policy.py` | What this skill decided | Yes |
 | `.ste-writing.json` | What your project decided | Yes, in your project |
 
 The skill's own judgements are code, not data. A rule tier names a check in the
-linter, and a slop word only means something to the check that reads it.
+linter, and a slop word only means something to the check that reads it. So a
+rule record carries no tier. `--rule` joins the two when it prints the rule, and
+the tier can change without a rebuild.
 
 Two tests hold the table and the linter to each other. A typo in a check name
 fails the build, and does not switch a rule off in silence.
@@ -93,14 +96,14 @@ fails the build, and does not switch a rule off in silence.
 
 | Script | Lines | What it does |
 |---|---|---|
-| `ste-lint.py` | 1076 | The gate. Reads prose, reports findings, returns an exit code |
-| `build-dictionary.py` | 635 | Turns your PDF into `data/` |
+| `ste-lint.py` | 1188 | The gate. Reads prose, reports findings, returns an exit code |
+| `build-dictionary.py` | 879 | Turns your PDF into `data/` |
 | `localize.py` | 299 | Plans a locale, then checks what the agent wrote |
-| `ste_data.py` | 243 | The word lists the scripts share |
+| `ste_data.py` | 312 | The shapes of the built data, and the word lists |
 | `ste_policy.py` | 186 | The rule table, and the words STE never documents |
 | `hooks/ste-hook.py` | 209 | Stop hook. Inert without a marker file |
 | `remind.py` | 44 | Prints the rules no script can check |
-| `tests/test_ste.py` | 720 | 72 tests |
+| `tests/test_ste.py` | 949 | 97 tests |
 
 ### build-dictionary.py
 
@@ -120,8 +123,18 @@ minimum counts, and one spot check per parsing hazard that has bitten before. A
 dictionary that is quietly half complete is worse than no dictionary. The linter
 would then pass text nobody checked.
 
-Issue 9 yields 799 approved lemmas, 1222 non-approved lemmas with the
-replacement the standard suggests for each, and all 53 rules.
+Issue 9 yields 799 approved lemmas and 1222 non-approved lemmas, each with the
+replacement the standard suggests. It also yields all 53 rules, the 8 general
+recommendations, 175 worked examples, and 112 index subjects.
+
+The rules go to `data/ste-rules.json` as one record each: the id, the section,
+the statement, the text, and the examples. Nine markdown files held them before,
+and the only way in was a regular expression over a heading. The build wrote the
+subject index to disk for two releases, and no code ever opened it.
+
+The build refuses to write when the rules it found are not the rules the table
+names. A count of 53 passes while a rule arrives under the wrong id, and a rule
+the table does not name has no tier at all.
 
 ### ste-lint.py
 
@@ -129,9 +142,19 @@ replacement the standard suggests for each, and all 53 rules.
 python3 scripts/ste-lint.py README.md                # check a file
 python3 scripts/ste-lint.py --format json docs/*.md  # for a machine
 cat draft.md | python3 scripts/ste-lint.py -         # from standard input
-python3 scripts/ste-lint.py --rule 3.6               # read one rule
+python3 scripts/ste-lint.py --rule 3.6               # the rule and its examples
+python3 scripts/ste-lint.py --rule 3.6 --full        # the text of the rule
+python3 scripts/ste-lint.py --subject hyphen         # which rule covers this?
+python3 scripts/ste-lint.py --rules                  # every rule and its tier
 python3 scripts/ste-lint.py --triage docs/           # every word to decide
 ```
+
+`--rule` gives the statement and the worked examples, which is what an agent
+fixes a finding from. The text of the rule is 60 lines of prose, so it comes
+only when asked for. `--subject` answers from the standard's own index, and
+reaches the general recommendations (`GR-1` thru `GR-8`) as well as the rules.
+These three read the rules and nothing else, so they answer before the linter
+loads the dictionary.
 
 Findings carry the rule id, the `file:line:column`, the text, the rule in one
 line, and the replacement the standard suggests:
@@ -243,8 +266,12 @@ ASD-STE100 has 53 writing rules. This skill adds four house rules, which carry a
 | counting | 4 | Not a fault. Rules 8.4 thru 8.7 shape the word count |
 | judgment | 17 | No machine can decide it. `remind.py` prints these |
 
-The other rules have no check. The table still holds them, for the rule files and
-for the checklist. `scripts/ste_policy.py` is the source of the counts above.
+The other rules have no check. The table still holds them, for `--rule` and for
+the checklist. `scripts/ste_policy.py` is the source of the counts above.
+
+ASD also gives 8 general recommendations, `GR-1` thru `GR-8`. They are not rules
+and they carry no tier, and the linter never raises one. They are readable
+because the standard's own index sends the reader to them.
 
 The 13 enforced:
 
@@ -279,12 +306,14 @@ worse than no linter, because the gate still looks green.
 python3 tests/test_ste.py
 ```
 
-72 tests. The ones that need the dictionary report as skipped until you build it,
-so a fresh clone still runs 20 of them.
+97 tests. The ones that need the built data report as skipped until you build it,
+so a fresh clone still runs 38 of them.
 
 They cover the word counting, the sentence segmentation, and the masking. They
 check the policy table in both directions, every exit code, the locale contract,
-the marker commands, and each behaviour of the hook.
+the marker commands, and each behaviour of the hook. The tests check the example
+and index parsers on text written for the test. ASD holds the copyright to the
+standard, and this repository commits its tests.
 
 ## What it does not do
 

@@ -75,11 +75,25 @@ Follow this in order. Step 3 is not optional and its result is not negotiable.
    When they are not enough, read the rule:
 
    ```bash
-   python3 <skill>/scripts/ste-lint.py --rule 3.6
+   python3 <skill>/scripts/ste-lint.py --rule 3.6          # and its examples
+   python3 <skill>/scripts/ste-lint.py --rule 3.6 --full   # the text of the rule
    ```
+
+   `--rule` gives the statement and the standard's own worked examples: the
+   sentence it refuses, and the sentence it writes instead. Use the examples
+   first. The text of the rule is 60 lines of prose, so ask for it only when
+   the examples do not settle the question.
 
    An id that starts with `H` is a house rule. ASD did not write those, so
    there is no rule text to read and the suggestion is the whole answer.
+
+   To find the rule for a subject the linter cannot see, ask the standard's own
+   index:
+
+   ```bash
+   python3 <skill>/scripts/ste-lint.py --subject hyphen
+   python3 <skill>/scripts/ste-lint.py --rules             # every rule and tier
+   ```
 
 5. **Run the linter again.** Repeat until it exits 0.
 6. **Walk the checklist.** Run `python3 <skill>/scripts/remind.py` and confirm
@@ -168,11 +182,14 @@ The linter is the gate, not the method. These keep most findings from happening.
 | `scripts/remind.py` | Prints the checklist above. Never blocks |
 | `hooks/ste-hook.py` | Stop hook. Inert unless the repository has a marker file |
 | `data/ste-dictionary.json` | The words of the standard. The build step writes it |
+| `data/ste-rules.json` | The rules of the standard, one record each, with examples |
 | `.ste-writing.json` | The marker, and this project's own words |
 
-Two dictionaries, and they do not mix. `data/ste-dictionary.json` holds what ASD
-wrote, and only the build step writes there. `.ste-writing.json` holds what the
-project decided. Everything else is code.
+Two sources from the standard, and they do not mix with ours.
+`data/ste-dictionary.json` and `data/ste-rules.json` hold what ASD wrote, and
+only the build step writes there. A rule record carries no tier, because the
+tier is ours: `--rule` joins the two when it prints. `.ste-writing.json` holds
+what the project decided. Everything else is code.
 
 ASD holds the copyright to the standard. Do not paste it into a file, an issue,
 or a commit.
