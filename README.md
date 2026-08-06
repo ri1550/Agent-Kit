@@ -68,7 +68,3 @@ linked.
 
 Some skills need a setup step after you install them. Read the `README.md` in the
 skill directory.
-
-## License
-
-MIT. Each skill names its own credits in its `README.md`.
