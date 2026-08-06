@@ -858,12 +858,19 @@ def print_rule(rule_id: str, full: bool = False) -> int:
         print(NOT_BUILT)
         return EXIT_CLEAN
 
+    # 17 of the rules carry no example, and they are the ones where the prose is
+    # the answer: how to count words, and how to hold a paragraph to one topic.
+    # For those the statement says no more than the finding already said, so the
+    # rule gives its text and the agent does not have to ask twice.
     print()
-    print(record["text"] if full else record["statement"])
+    if full or not record["examples"]:
+        print(record["text"])
+        return EXIT_CLEAN
+
+    print(record["statement"])
     print_examples(record)
-    if not full:
-        print()
-        print(f"For the rule in full: ste-lint.py --rule {rule_id} --full")
+    print()
+    print(f"For the rule in full: ste-lint.py --rule {rule_id} --full")
     return EXIT_CLEAN
 
 

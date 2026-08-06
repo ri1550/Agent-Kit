@@ -12,9 +12,10 @@ The split this module keeps:
     <repo>/.ste-writing.json   what the project decided. Its own words, and the
                                marker that switches the skill on.
 
-Only the first is generated. Our own words stay out of the dictionary file and
+The first two are generated. Our own words stay out of the dictionary file and
 are merged here, at load time, so a change to the policy takes effect at once
-instead of waiting for a rebuild that wants a 434-page PDF.
+instead of waiting for a rebuild that wants a 434-page PDF. The tier of a rule
+keeps out of the rule file for the same reason.
 """
 
 from __future__ import annotations

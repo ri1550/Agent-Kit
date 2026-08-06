@@ -441,6 +441,20 @@ class RuleLookup(unittest.TestCase):
         self.assertLess(len(short), len(full))
         self.assertIn("--full", short)
 
+    def test_a_rule_with_no_examples_gives_its_text(self):
+        # Rule 8.4 has no example. Its statement is already in the finding, so a
+        # statement is a call that teaches the agent nothing and costs a turn.
+        result = run_linter("--rule", "8.4")
+        self.assertEqual(result.returncode, CLEAN)
+        self.assertNotIn("--full", result.stdout)
+        self.assertGreater(len(result.stdout.splitlines()), 5)
+
+    def test_the_full_rule_does_not_print_the_examples_twice(self):
+        # The text holds the examples where the standard printed them, so the
+        # pairs the short form renders would be a second copy.
+        full = run_linter("--rule", "3.6", "--full").stdout
+        self.assertNotIn("  Non-STE  ", full)
+
     def test_a_recommendation_is_readable_and_has_no_tier(self):
         # The subject index sends the reader to GR-5, so --rule has to open it.
         result = run_linter("--rule", "gr-5")
