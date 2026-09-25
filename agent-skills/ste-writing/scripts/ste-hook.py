@@ -126,10 +126,12 @@ def main() -> int:
     except (json.JSONDecodeError, ValueError):
         allow()
 
-    # A blocking Stop hook re-invokes the agent. If the prose cannot be made to
-    # pass, that is a loop. Release on the second pass and say why.
-    if payload.get("stop_hook_active"):
-        allow(systemMessage="ste-writing: lint still failing, releasing the turn.")
+    # Every answer below that blocks, or that carries additionalContext,
+    # re-invokes the agent. On that second pass the hook must release or it
+    # loops. Release after the lint has run, not before, so what the hook says
+    # is what the lint found. Released before, a clean run that only carried the
+    # judgment reminder was reported as a failure.
+    second_pass = bool(payload.get("stop_hook_active"))
 
     start = Path(payload.get("cwd") or Path.cwd()).resolve()
     root = repository_root(start)
@@ -164,6 +166,11 @@ def main() -> int:
         allow(systemMessage=f"ste-writing: could not run the linter ({error}). Skipped.")
 
     if result.returncode == LINT_ERROR:
+        if second_pass:
+            allow(
+                systemMessage="ste-writing: the linter still cannot run, "
+                "releasing the turn."
+            )
         block(
             "ste-writing is switched on in this repository, but the linter cannot "
             "run:\n\n"
@@ -175,6 +182,8 @@ def main() -> int:
     if result.returncode == LINT_CLEAN:
         # The lint passed. Put the judgment-tier checklist in front of the agent
         # here, at the decision point, because no script can check those rules.
+        if second_pass:
+            allow()  # The reminder went out on the first pass. Do not repeat it.
         note = reminder()
         if not note:
             allow()
@@ -188,6 +197,8 @@ def main() -> int:
         allow(systemMessage="ste-writing: unreadable linter output. Skipped.")
 
     if result.returncode == LINT_FLAGGED:
+        if second_pass:
+            allow()  # Reported on the first pass. Let the turn end.
         # Flagged findings are advice, not a gate. Say so and let the turn end.
         allow(
             systemMessage=f"ste-writing: {report.get('flagged', 0)} flagged finding(s).",
@@ -198,6 +209,12 @@ def main() -> int:
                     "Resolve them or say why not:\n" + summarize(report, "flagged")
                 ),
             },
+        )
+
+    if second_pass:
+        allow(
+            systemMessage=f"ste-writing: {report.get('enforced', 0)} enforced "
+            "violation(s) remain, releasing the turn."
         )
 
     block(

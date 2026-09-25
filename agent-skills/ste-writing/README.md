@@ -240,8 +240,11 @@ reads exit 2 as "block", and the linter reads 1 as "the text breaks an enforced
 rule". A straight pass would invert the gate. The hook always exits 0 and says
 what it means in JSON.
 
-A blocking Stop hook re-invokes the agent, so text the agent cannot fix would
-loop. The hook reads `stop_hook_active` and releases on the second pass.
+A Stop hook starts the agent again when it blocks, and also when it sends
+`additionalContext`. Text the agent cannot correct would loop. The hook reads
+`stop_hook_active`, then runs the linter again before it releases the turn. It
+releases without a message when the text is clean, because the first pass
+already reported what the linter found.
 
 ## .ste-writing.json
 
